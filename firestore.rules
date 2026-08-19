@@ -1,0 +1,131 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Kullanıcının giriş yapmış olup olmadığını kontrol eder.
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    // Belirli kullanıcı hesabının sahibi olup olmadığını kontrol eder.
+    function isOwner(userId) {
+      return signedIn() && request.auth.uid == userId;
+    }
+
+    // Giriş yapan kullanıcının yönetici olup olmadığını kontrol eder.
+    function isAdmin() {
+      return signedIn()
+        && get(
+          /databases/$(database)/documents/users/$(request.auth.uid)
+        ).data.role == 'admin';
+    }
+
+    // Kullanıcının konuşmanın katılımcısı olup olmadığını kontrol eder.
+    function isConversationParticipant(conversationId) {
+      return signedIn()
+        && request.auth.uid in get(
+          /databases/$(database)/documents/conversations/$(conversationId)
+        ).data.participants;
+    }
+
+    // -----------------------------------------
+    // KULLANICI PROFİLLERİ
+    // -----------------------------------------
+
+    match /users/{userId} {
+
+      // Giriş yapmış kullanıcılar kullanıcı profillerini okuyabilir.
+      allow read: if signedIn();
+
+      // Yeni kullanıcı kendi hesabını oluşturabilir.
+      // İlk oluşturulan rol mutlaka "user" olmalıdır.
+      allow create: if isOwner(userId)
+        && request.resource.data.role == 'user';
+
+      // Kullanıcı kendi profilini güncelleyebilir,
+      // ancak rolünü kendi başına değiştiremez.
+      // Yönetici ise kullanıcı profillerini yönetebilir.
+      allow update: if isAdmin()
+        || (
+          isOwner(userId)
+          && request.resource.data.role == resource.data.role
+        );
+
+      // Silme işlemi şimdilik kapalı.
+      allow delete: if false;
+    }
+
+    // -----------------------------------------
+    // KULLANICI ADLARI
+    // -----------------------------------------
+
+    match /usernames/{username} {
+
+      // Kullanıcı adı kontrolü için giriş yapmış kullanıcı okuyabilir.
+      allow read: if signedIn();
+
+      // Kullanıcı kendi UID'siyle kullanıcı adı oluşturabilir.
+      allow create: if signedIn()
+        && request.resource.data.uid == request.auth.uid;
+
+      // Kullanıcı adı değişikliği şimdilik kapalı.
+      allow update, delete: if false;
+    }
+
+    // -----------------------------------------
+    // KONUŞMALAR
+    // -----------------------------------------
+
+    match /conversations/{conversationId} {
+
+      // Sadece konuşma katılımcıları okuyabilir.
+      allow read: if isConversationParticipant(conversationId);
+
+      // Yeni konuşmada giriş yapan kullanıcı katılımcılardan biri olmalı.
+      allow create: if signedIn()
+        && request.resource.data.participants is list
+        && request.resource.data.participants.size() == 2
+        && request.auth.uid in request.resource.data.participants;
+
+      // Konuşma katılımcıları konuşmayı güncelleyebilir.
+      allow update: if isConversationParticipant(conversationId)
+        && request.auth.uid in request.resource.data.participants;
+
+      // Silme şimdilik kapalı.
+      allow delete: if false;
+    }
+
+    // -----------------------------------------
+    // MESAJLAR
+    // -----------------------------------------
+
+    match /messages/{messageId} {
+
+      // Mesaj sadece ilgili konuşmanın katılımcılarına açık.
+      allow read: if signedIn()
+        && isConversationParticipant(resource.data.conversationId);
+
+      // Mesajı gönderen kişi gerçekten giriş yapan kullanıcı olmalı.
+      allow create: if signedIn()
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.senderId == request.auth.uid
+        && isConversationParticipant(
+          request.resource.data.conversationId
+        );
+
+      // Mesaj düzenleme/silme şimdilik kapalı.
+      allow update, delete: if false;
+    }
+
+    // -----------------------------------------
+    // YÖNETİCİ ALANI
+    // -----------------------------------------
+
+    // Yöneticiye özel veriler için ayrılmış alan.
+    // Yönetici paneli geliştirildiğinde kullanılacak.
+    match /adminData/{document=**} {
+      allow read, write: if isAdmin();
+    }
+  }
+}
