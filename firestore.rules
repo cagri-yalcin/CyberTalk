@@ -3,17 +3,15 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // Kullanıcının giriş yapmış olup olmadığını kontrol eder.
     function signedIn() {
       return request.auth != null;
     }
 
-    // Belirli kullanıcı hesabının sahibi olup olmadığını kontrol eder.
     function isOwner(userId) {
-      return signedIn() && request.auth.uid == userId;
+      return signedIn()
+        && request.auth.uid == userId;
     }
 
-    // Giriş yapan kullanıcının yönetici olup olmadığını kontrol eder.
     function isAdmin() {
       return signedIn()
         && get(
@@ -21,109 +19,121 @@ service cloud.firestore {
         ).data.role == 'admin';
     }
 
-    // Kullanıcının konuşmanın katılımcısı olup olmadığını kontrol eder.
-    function isConversationParticipant(conversationId) {
+    function conversationParticipant(
+      conversationId
+    ) {
       return signedIn()
         && request.auth.uid in get(
           /databases/$(database)/documents/conversations/$(conversationId)
         ).data.participants;
     }
 
-    // -----------------------------------------
-    // KULLANICI PROFİLLERİ
-    // -----------------------------------------
-
     match /users/{userId} {
-
-      // Giriş yapmış kullanıcılar kullanıcı profillerini okuyabilir.
       allow read: if signedIn();
 
-      // Yeni kullanıcı kendi hesabını oluşturabilir.
-      // İlk oluşturulan rol mutlaka "user" olmalıdır.
       allow create: if isOwner(userId)
         && request.resource.data.role == 'user';
 
-      // Kullanıcı kendi profilini güncelleyebilir,
-      // ancak rolünü kendi başına değiştiremez.
-      // Yönetici ise kullanıcı profillerini yönetebilir.
       allow update: if isAdmin()
         || (
           isOwner(userId)
-          && request.resource.data.role == resource.data.role
+          && request.resource.data.role ==
+             resource.data.role
         );
 
-      // Silme işlemi şimdilik kapalı.
       allow delete: if false;
     }
 
-    // -----------------------------------------
-    // KULLANICI ADLARI
-    // -----------------------------------------
-
     match /usernames/{username} {
-
-      // Kullanıcı adı kontrolü için giriş yapmış kullanıcı okuyabilir.
       allow read: if signedIn();
 
-      // Kullanıcı kendi UID'siyle kullanıcı adı oluşturabilir.
       allow create: if signedIn()
-        && request.resource.data.uid == request.auth.uid;
+        && request.resource.data.uid ==
+           request.auth.uid;
 
-      // Kullanıcı adı değişikliği şimdilik kapalı.
-      allow update, delete: if false;
+      allow update: if signedIn()
+        && resource.data.uid ==
+           request.auth.uid
+        && request.resource.data.uid ==
+           request.auth.uid;
+
+      allow delete: if false;
     }
 
-    // -----------------------------------------
-    // KONUŞMALAR
-    // -----------------------------------------
-
     match /conversations/{conversationId} {
+      allow read: if signedIn()
+        && request.auth.uid in
+           resource.data.participants;
 
-      // Sadece konuşma katılımcıları okuyabilir.
-      allow read: if isConversationParticipant(conversationId);
-
-      // Yeni konuşmada giriş yapan kullanıcı katılımcılardan biri olmalı.
       allow create: if signedIn()
         && request.resource.data.participants is list
         && request.resource.data.participants.size() == 2
-        && request.auth.uid in request.resource.data.participants;
+        && request.auth.uid in
+           request.resource.data.participants;
 
-      // Konuşma katılımcıları konuşmayı güncelleyebilir.
-      allow update: if isConversationParticipant(conversationId)
-        && request.auth.uid in request.resource.data.participants;
+      allow update: if signedIn()
+        && request.auth.uid in
+           resource.data.participants
+        && request.resource.data.participants is list
+        && request.auth.uid in
+           request.resource.data.participants;
 
-      // Silme şimdilik kapalı.
       allow delete: if false;
     }
 
-    // -----------------------------------------
-    // MESAJLAR
-    // -----------------------------------------
-
     match /messages/{messageId} {
-
-      // Mesaj sadece ilgili konuşmanın katılımcılarına açık.
       allow read: if signedIn()
-        && isConversationParticipant(resource.data.conversationId);
+        && (
+          resource.data.senderId ==
+            request.auth.uid
+          ||
+          resource.data.receiverId ==
+            request.auth.uid
+        );
 
-      // Mesajı gönderen kişi gerçekten giriş yapan kullanıcı olmalı.
       allow create: if signedIn()
-        && request.resource.data.uid == request.auth.uid
-        && request.resource.data.senderId == request.auth.uid
-        && isConversationParticipant(
+        && request.resource.data.uid ==
+           request.auth.uid
+        && request.resource.data.senderId ==
+           request.auth.uid
+        && request.resource.data.receiverId is string
+        && request.resource.data.conversationId is string
+        && conversationParticipant(
           request.resource.data.conversationId
         );
 
-      // Mesaj düzenleme/silme şimdilik kapalı.
-      allow update, delete: if false;
+      allow update: if signedIn()
+        && resource.data.senderId ==
+           request.auth.uid
+        && request.resource.data
+          .diff(resource.data)
+          .affectedKeys()
+          .hasOnly([
+            'deletedForEveryone',
+            'deletedAt'
+          ]);
+
+      allow delete: if false;
     }
 
-    // -----------------------------------------
-    // YÖNETİCİ ALANI
-    // -----------------------------------------
+    match /messageDeletions/{deletionId} {
+      allow read: if signedIn()
+        && resource.data.uid ==
+           request.auth.uid;
 
-    // Yöneticiye özel veriler için ayrılmış alan.
-    // Yönetici paneli geliştirildiğinde kullanılacak.
+      allow create: if signedIn()
+        && request.resource.data.uid ==
+           request.auth.uid
+        && request.resource.data.messageId is string
+        && request.resource.data.conversationId is string;
+
+      allow delete: if signedIn()
+        && resource.data.uid ==
+           request.auth.uid;
+
+      allow update: if false;
+    }
+
     match /adminData/{document=**} {
       allow read, write: if isAdmin();
     }

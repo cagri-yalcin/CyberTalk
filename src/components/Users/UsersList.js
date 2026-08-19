@@ -1,75 +1,268 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, {
+  useEffect,
+  useState,
+} from 'react';
+
 import { db } from '../../services/firebase';
 
 function Avatar({ user }) {
-  if (user.photoURL) return <img src={user.photoURL} alt="" className="avatar" />;
-  const initials = (user.displayName || 'CT')
+  if (user.photoURL) {
+    return (
+      <img
+        src={user.photoURL}
+        alt=""
+        className="avatar"
+      />
+    );
+  }
+
+  const initials = (
+    user.displayName || 'CT'
+  )
     .split(' ')
     .slice(0, 2)
     .map((part) => part[0])
     .join('')
     .toUpperCase();
-  return <div className="avatar avatar-fallback">{initials || 'CT'}</div>;
+
+  return (
+    <div className="avatar avatar-fallback">
+      {initials || 'CT'}
+    </div>
+  );
 }
 
-export default function UsersList({ currentUser, search, selectedUser, onSelect }) {
-  const [users, setUsers] = useState([]);
+export default function UsersList({
+  currentUser,
+  search,
+  selectedUser,
+  onSelect,
+}) {
+  const [user, setUser] =
+    useState(null);
+
+  const [loading, setLoading] =
+    useState(false);
+
+  const [searched, setSearched] =
+    useState(false);
 
   useEffect(() => {
-    const unsubscribe = db.collection('users').limit(100).onSnapshot(
-      (snapshot) => {
-        const list = snapshot.docs
-          .map((doc) => ({ id: doc.id, ...doc.data() }))
-          .filter((item) => item.uid !== currentUser.uid);
+    let alive = true;
 
-        setUsers(list);
-      },
-      (error) => console.error('Kullanıcı listesi alınamadı:', error)
-    );
+    const value =
+      search.trim();
 
-    return unsubscribe;
-  }, [currentUser.uid]);
+    setUser(null);
+    setSearched(false);
 
-  const filtered = useMemo(() => {
-    const q = search.trim().toLocaleLowerCase('tr-TR');
-    if (!q) return users;
-    return users.filter((u) =>
-      (u.displayName || '').toLocaleLowerCase('tr-TR').includes(q) ||
-      (u.email || '').toLocaleLowerCase('tr-TR').includes(q)
-    );
-  }, [users, search]);
+    if (!value) {
+      setLoading(false);
+      return undefined;
+    }
 
-  if (!filtered.length) {
+    if (
+      !/^@[a-zA-Z0-9._]{3,20}$/.test(
+        value
+      )
+    ) {
+      setLoading(false);
+      return undefined;
+    }
+
+    const username =
+      value
+        .slice(1)
+        .toLowerCase();
+
+    setLoading(true);
+
+    const timer =
+      window.setTimeout(
+        async () => {
+          try {
+            const usernameSnapshot =
+              await db
+                .collection(
+                  'usernames'
+                )
+                .doc(username)
+                .get();
+
+            if (
+              !usernameSnapshot.exists
+            ) {
+              if (alive) {
+                setSearched(true);
+                setUser(null);
+              }
+
+              return;
+            }
+
+            const usernameData =
+              usernameSnapshot.data() ||
+              {};
+
+            if (
+              !usernameData.uid ||
+              usernameData.uid ===
+              currentUser.uid
+            ) {
+              if (alive) {
+                setSearched(true);
+                setUser(null);
+              }
+
+              return;
+            }
+
+            const profileSnapshot =
+              await db
+                .collection('users')
+                .doc(
+                  usernameData.uid
+                )
+                .get();
+
+            if (
+              !profileSnapshot.exists
+            ) {
+              if (alive) {
+                setSearched(true);
+                setUser(null);
+              }
+
+              return;
+            }
+
+            if (alive) {
+              setUser({
+                uid:
+                  profileSnapshot.id,
+                ...profileSnapshot.data(),
+              });
+
+              setSearched(true);
+            }
+          } catch (error) {
+            console.error(
+              'Kullanıcı aranamadı:',
+              error
+            );
+
+            if (alive) {
+              setUser(null);
+              setSearched(true);
+            }
+          } finally {
+            if (alive) {
+              setLoading(false);
+            }
+          }
+        },
+        250
+      );
+
+    return () => {
+      alive = false;
+      window.clearTimeout(
+        timer
+      );
+    };
+  }, [
+    search,
+    currentUser.uid,
+  ]);
+
+  if (!search.trim()) {
+    return null;
+  }
+
+  if (
+    !/^@[a-zA-Z0-9._]{3,20}$/.test(
+      search.trim()
+    )
+  ) {
     return (
       <div className="list-state">
-        <strong>{users.length ? 'Kullanıcı bulunamadı' : 'Henüz başka kullanıcı yok'}</strong>
-        <span>Başka bir hesapla giriş yaptığında burada görünecek.</span>
+        <strong>
+          @kullanıcıadı kullan
+        </strong>
+
+        <span>
+          Örneğin: @aligungor
+        </span>
       </div>
     );
   }
 
+  if (loading) {
+    return (
+      <div className="list-state">
+        Kullanıcı aranıyor...
+      </div>
+    );
+  }
+
+  if (
+    searched &&
+    !user
+  ) {
+    return (
+      <div className="list-state">
+        <strong>
+          Kullanıcı bulunamadı
+        </strong>
+
+        <span>
+          Kullanıcı adını kontrol et.
+        </span>
+      </div>
+    );
+  }
+
+  if (!user) {
+    return null;
+  }
+
+  const active =
+    selectedUser?.uid ===
+    user.uid;
+
   return (
     <div className="users-list">
-      <div className="section-label">KİŞİLER</div>
-      {filtered.map((user) => {
-        const active = selectedUser && selectedUser.uid === user.uid;
-        return (
-          <button
-            key={user.uid}
-            className={`user-row ${active ? 'active' : ''}`}
-            onClick={() => onSelect(user)}
-          >
-            <Avatar user={user} />
-            <div className="user-row-content">
-              <div className="user-row-main">
-                <strong>{user.displayName || 'CyberTalk Kullanıcısı'}</strong>
-                <span className="online-dot"></span>
-              </div>
-              <span>{user.email || 'CyberTalk kullanıcısı'}</span>
-            </div>
-          </button>
-        );
-      })}
+      <div className="section-label">
+        ARAMA SONUCU
+      </div>
+
+      <button
+        type="button"
+        className={`user-row ${active
+            ? 'active'
+            : ''
+          }`}
+        onClick={() =>
+          onSelect(user)
+        }
+      >
+        <Avatar user={user} />
+
+        <div className="user-row-content">
+          <div className="user-row-main">
+            <strong>
+              {user.displayName ||
+                'CyberTalk Kullanıcısı'}
+            </strong>
+
+            <span className="online-dot"></span>
+          </div>
+
+          <span>
+            @{user.username}
+          </span>
+        </div>
+      </button>
     </div>
   );
 }

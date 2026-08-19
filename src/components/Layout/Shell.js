@@ -1,6 +1,14 @@
-import React, { useEffect, useState } from 'react';
-import { auth, db, firebase } from '../../services/firebase';
+import React, {
+  useEffect,
+  useState,
+} from 'react';
+
+import {
+  db,
+} from '../../services/firebase';
+
 import UsersList from '../Users/UsersList';
+import ConversationsList from '../Chat/ConversationsList';
 import Conversation from '../Chat/Conversation';
 import ProfilePanel from '../Profile/ProfilePanel';
 
@@ -11,71 +19,124 @@ export default function Shell({
   selectedUser,
   setSelectedUser,
 }) {
-  const [showProfile, setShowProfile] = useState(false);
+  const [
+    profileTarget,
+    setProfileTarget,
+  ] = useState(null);
+
+  const [
+    currentProfile,
+    setCurrentProfile,
+  ] = useState(null);
+
+  const [
+    showArchived,
+    setShowArchived,
+  ] = useState(false);
 
   useEffect(() => {
-    const ref = db.collection('users').doc(user.uid);
-
-    ref.get()
-      .then((snap) => {
-        const existing = snap.data() || {};
-
-        return ref.set(
-          {
-            uid: user.uid,
-            displayName: user.displayName || existing.displayName || 'CyberTalk Kullanıcısı',
-            username: existing.username || '',
-            photoURL: user.photoURL || existing.photoURL || '',
-            email: user.email || existing.email || '',
-            role: existing.role || 'user',
-            createdAt:
-              existing.createdAt ||
-              firebase.firestore.FieldValue.serverTimestamp(),
-            updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+    const unsubscribe =
+      db
+        .collection('users')
+        .doc(user.uid)
+        .onSnapshot(
+          (snapshot) => {
+            setCurrentProfile(
+              snapshot.data() || {}
+            );
           },
-          { merge: true }
+          (error) => {
+            console.error(
+              'Profil dinlenemedi:',
+              error
+            );
+          }
         );
-      })
-      .catch((error) => console.error('Profil kaydedilemedi:', error));
-  }, [user]);
+
+    return unsubscribe;
+  }, [user.uid]);
+
+  const ownUser = {
+    ...user,
+    ...(currentProfile || {}),
+  };
+
+  const selectUser =
+    (nextUser) => {
+      setSelectedUser(
+        nextUser
+      );
+
+      setSearch('');
+      setShowArchived(false);
+    };
 
   return (
     <div className="workspace">
       <aside className="sidebar">
         <div className="sidebar-top">
           <div className="brand-row compact">
-            <div className="brand-mark small">CT</div>
+            <div className="brand-mark small">
+              CT
+            </div>
 
             <div>
-              <div className="brand-name">CyberTalk</div>
-              <div className="brand-subtitle">Güvenli iletişim</div>
+              <div className="brand-name">
+                CyberTalk
+              </div>
+
+              <div className="brand-subtitle">
+                Güvenli iletişim
+              </div>
             </div>
           </div>
 
           <button
+            type="button"
             className="current-user current-user-button"
-            onClick={() => setShowProfile(true)}
-            title="Profilimi aç"
+            onClick={() =>
+              setProfileTarget(
+                ownUser
+              )
+            }
           >
-            {user.photoURL ? (
-              <img src={user.photoURL} alt="" className="avatar" />
+            {ownUser.photoURL ? (
+              <img
+                src={ownUser.photoURL}
+                alt=""
+                className="avatar"
+              />
             ) : (
               <div className="avatar avatar-fallback">
-                {(user.displayName || 'CT')
+                {(ownUser.displayName ||
+                  'CT')
                   .split(' ')
                   .slice(0, 2)
-                  .map((part) => part[0])
+                  .map(
+                    (part) =>
+                      part[0]
+                  )
                   .join('')
                   .toUpperCase()}
               </div>
             )}
 
             <div className="current-user-text">
-              <strong>{user.displayName || 'Kullanıcı'}</strong>
-              <span>Çevrimiçi</span>
+              <strong>
+                {ownUser.displayName ||
+                  'Kullanıcı'}
+              </strong>
+
+              <span>
+                {ownUser.username
+                  ? `@${ownUser.username}`
+                  : 'Çevrimiçi'}
+              </span>
             </div>
 
-            <span className="profile-chevron">›</span>
+            <span className="profile-chevron">
+              ›
+            </span>
           </button>
         </div>
 
@@ -84,41 +145,126 @@ export default function Shell({
 
           <input
             value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Kullanıcı ara..."
+            onChange={(event) =>
+              setSearch(
+                event.target.value
+              )
+            }
+            placeholder="@kullanıcıadı ara..."
           />
         </div>
 
-        <UsersList
-          currentUser={user}
-          search={search}
-          selectedUser={selectedUser}
-          onSelect={setSelectedUser}
-        />
+        {search.trim() ? (
+          <UsersList
+            currentUser={user}
+            search={search}
+            selectedUser={
+              selectedUser
+            }
+            onSelect={
+              selectUser
+            }
+          />
+        ) : (
+          <>
+            <div className="sidebar-list-header">
+              <div className="section-label">
+                {showArchived
+                  ? 'ARŞİVLENMİŞ'
+                  : 'SOHBETLER'}
+              </div>
+
+              <button
+                type="button"
+                className={`archive-toggle ${showArchived
+                  ? 'active'
+                  : ''
+                  }`}
+                onClick={() =>
+                  setShowArchived(
+                    (value) =>
+                      !value
+                  )
+                }
+              >
+                {showArchived
+                  ? 'Sohbetler'
+                  : 'Arşiv'}
+              </button>
+            </div>
+
+            <ConversationsList
+              currentUser={user}
+              selectedUser={
+                selectedUser
+              }
+              archived={
+                showArchived
+              }
+              onSelect={
+                selectUser
+              }
+            />
+          </>
+        )}
       </aside>
 
       <main className="chat-panel">
         {selectedUser ? (
-          <Conversation currentUser={user} otherUser={selectedUser} />
+          <Conversation
+            key={`${user.uid}:${selectedUser.uid}`}
+            currentUser={
+              ownUser
+            }
+            otherUser={
+              selectedUser
+            }
+            onViewProfile={() =>
+              setProfileTarget(
+                selectedUser
+              )
+            }
+            onCloseConversation={() =>
+              setSelectedUser(
+                null
+              )
+            }
+          />
         ) : (
           <section className="empty-chat">
-            <div className="empty-logo">CT</div>
+            <div className="empty-logo">
+              CT
+            </div>
 
-            <h1>CyberTalk'a hoş geldin.</h1>
+            <h1>
+              CyberTalk'a hoş geldin.
+            </h1>
 
             <p>
-              Soldan bir kullanıcı seçerek bir konuşma başlat.
+              Bir sohbet seç veya
+              @kullanıcıadı ara.
             </p>
 
-            <span>Gerçek zamanlı mesajlaşma · Firebase altyapısı</span>
+            <span>
+              Gerçek zamanlı mesajlaşma ·
+              Firebase altyapısı
+            </span>
           </section>
         )}
       </main>
 
-      {showProfile && (
+      {profileTarget && (
         <ProfilePanel
-          user={user}
-          onClose={() => setShowProfile(false)}
+          user={profileTarget}
+          isOwnProfile={
+            profileTarget.uid ===
+            user.uid
+          }
+          onClose={() =>
+            setProfileTarget(
+              null
+            )
+          }
         />
       )}
     </div>

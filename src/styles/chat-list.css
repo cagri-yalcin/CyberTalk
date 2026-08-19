@@ -1,0 +1,145 @@
+.sidebar-list-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 0 20px 8px;
+}
+
+.archive-toggle {
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 7px 10px;
+    background: rgba(255, 255, 255, .025);
+    color: #9db0c4;
+    font-size: 11px;
+    font-weight: 800;
+}
+
+.archive-toggle:hover,
+.archive-toggle.active {
+    border-color: rgba(33, 212, 253, .35);
+    color: #72ddff;
+    background: rgba(33, 212, 253, .06);
+}
+
+.chat-list {
+    padding: 0 10px 20px;
+    overflow-y: auto;
+}
+
+.chat-list-item {
+    width: 100%;
+    border: 1px solid transparent;
+    border-radius: 16px;
+    padding: 12px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    text-align: left;
+    background: transparent;
+    color: #fff;
+}
+
+.chat-list-item:hover,
+.chat-list-item.active {
+    background: rgba(255, 255, 255, .045);
+    border-color: var(--line);
+}
+
+.chat-list-main {
+    min-width: 0;
+    flex: 1;
+}
+
+.chat-list-top,
+.chat-list-bottom {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.chat-list-top {
+    justify-content: space-between;
+}
+
+.chat-list-top strong {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.chat-list-top>span {
+    flex: 0 0 auto;
+    color: #6f849a;
+    font-size: 11px;
+}
+
+.chat-list-bottom {
+    margin-top: 5px;
+}
+
+.chat-list-preview {
+    min-width: 0;
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: #8ea3bb;
+    font-size: 13px;
+}
+
+.chat-list-meta {
+    flex: 0 0 auto;
+    font-size: 11px;
+}
+
+.chat-list-state {
+    padding: 32px 20px;
+    color: var(--muted);
+    text-align: center;
+    font-size: 13px;
+}
+
+.chat-list-state.error-state {
+    color: #ffb0b0;
+}
+
+.conversation-menu-rich {
+    width: 260px;
+}
+
+.danger-menu-item {
+    color: #ff9a9a !important;
+}
+
+.danger-menu-item:hover {
+    background: rgba(255, 90, 90, .08) !important;
+}
+
+.message-actions-menu {
+    z-index: 9999;
+    min-width: 190px;
+    padding: 6px;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    background: #0c1b2d;
+    box-shadow: 0 18px 45px rgba(0, 0, 0, .48);
+}
+
+.message-actions-menu button {
+    width: 100%;
+    border: 0;
+    border-radius: 8px;
+    padding: 10px 12px;
+    background: transparent;
+    color: #dbe8f4;
+    text-align: left;
+    font-size: 13px;
+    white-space: nowrap;
+}
+
+.message-actions-menu button:hover {
+    background: rgba(255, 255, 255, .06);
+}

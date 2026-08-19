@@ -20,9 +20,13 @@ if (!firebase.apps.length) {
 try {
   firebase.analytics();
 } catch (error) {
-  console.warn('Analytics başlatılamadı:', error);
+  console.warn(
+    'Analytics başlatılamadı:',
+    error
+  );
 }
 
 export const auth = firebase.auth();
 export const db = firebase.firestore();
+
 export { firebase };
