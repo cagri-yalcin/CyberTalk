@@ -14,6 +14,12 @@ import {
   formatMessageTime,
 } from '../../services/chat';
 
+import MessageBubble from './MessageBubble';
+import MessageActions from './MessageActions';
+import EmojiPicker from './EmojiPicker';
+import GifPicker from './GifPicker';
+import ComposerTools from './ComposerTools';
+
 function Avatar({ user }) {
   if (user?.photoURL) {
     return (
@@ -30,7 +36,9 @@ function Avatar({ user }) {
   )
     .split(' ')
     .slice(0, 2)
-    .map((part) => part[0])
+    .map(
+      (part) => part[0]
+    )
     .join('')
     .toUpperCase();
 
@@ -41,250 +49,366 @@ function Avatar({ user }) {
   );
 }
 
+function getMessageText(message) {
+  if (message.type === 'gif') {
+    return 'GIF';
+  }
+
+  if (
+    message.type === 'image'
+  ) {
+    return 'Fotoğraf';
+  }
+
+  if (
+    message.type === 'file'
+  ) {
+    return message.fileName || 'Dosya';
+  }
+
+  return message.text || '';
+}
+
 export default function Conversation({
   currentUser,
   otherUser,
   onViewProfile,
   onCloseConversation,
 }) {
-  const [showMenu, setShowMenu] = useState(false);
-  const [messages, setMessages] = useState([]);
-  const [draft, setDraft] = useState('');
-  const [conversationMeta, setConversationMeta] =
-    useState(null);
+  const [
+    showMenu,
+    setShowMenu,
+  ] = useState(false);
 
-  const [deletedMessageIds, setDeletedMessageIds] =
-    useState(new Set());
+  const [
+    messages,
+    setMessages,
+  ] = useState([]);
 
-  const [messageMenu, setMessageMenu] =
-    useState(null);
+  const [
+    draft,
+    setDraft,
+  ] = useState('');
 
-  const endRef = useRef(null);
-  const menuRef = useRef(null);
-  const messageMenuRef = useRef(null);
+  const [
+    conversationMeta,
+    setConversationMeta,
+  ] = useState(null);
 
-  const conversationId = getConversationId(
-    currentUser.uid,
-    otherUser.uid
-  );
+  const [
+    deletedMessageIds,
+    setDeletedMessageIds,
+  ] = useState(new Set());
 
-  const ensureConversation = async () => {
-    await db
-      .collection('conversations')
-      .doc(conversationId)
-      .set(
-        {
-          conversationId,
-          participants: [
-            currentUser.uid,
-            otherUser.uid,
-          ],
-          updatedAt:
-            firebase.firestore.FieldValue.serverTimestamp(),
-        },
-        {
-          merge: true,
-        }
-      );
-  };
+  const deletedMessageIdsRef =
+    useRef(new Set());
 
+  const [
+    messageMenu,
+    setMessageMenu,
+  ] = useState(null);
+
+  const [
+    showEmojiPicker,
+    setShowEmojiPicker,
+  ] = useState(false);
+
+  const [
+    showGifPicker,
+    setShowGifPicker,
+  ] = useState(false);
+
+  const [
+    showComposerTools,
+    setShowComposerTools,
+  ] = useState(false);
+
+  const [
+    deletionsLoaded,
+    setDeletionsLoaded,
+  ] = useState(false);
+
+  const [
+    replyTo,
+    setReplyTo,
+  ] = useState(null);
+
+  const [
+    forwardMessage,
+    setForwardMessage,
+  ] = useState(null);
+
+  const [
+    usersForForward,
+    setUsersForForward,
+  ] = useState([]);
+
+  const [
+    forwardLoading,
+    setForwardLoading,
+  ] = useState(false);
+
+  const [
+    reactionLoading,
+    setReactionLoading,
+  ] = useState(false);
+
+  const endRef =
+    useRef(null);
+
+  const menuRef =
+    useRef(null);
+
+  const messageMenuRef =
+    useRef(null);
+
+  const conversationId =
+    getConversationId(
+      currentUser.uid,
+      otherUser.uid
+    );
+
+  const ensureConversation =
+    async () => {
+      await db
+        .collection(
+          'conversations'
+        )
+        .doc(conversationId)
+        .set(
+          {
+            conversationId,
+
+            participants: [
+              currentUser.uid,
+              otherUser.uid,
+            ],
+
+            updatedAt:
+              firebase.firestore.FieldValue.serverTimestamp(),
+          },
+          {
+            merge: true,
+          }
+        );
+    };
+
+  /*
+   * Aktif sohbet metadata
+   */
   useEffect(() => {
-    const unsubscribe = db
-      .collection('conversations')
-      .doc(conversationId)
-      .onSnapshot(
-        (snapshot) => {
-          setConversationMeta(
-            snapshot.exists
-              ? snapshot.data()
-              : null
-          );
-        },
-        (error) => {
-          console.error(
-            'Konuşma bilgisi alınamadı:',
-            error
-          );
-        }
-      );
+    const unsubscribe =
+      db
+        .collection(
+          'conversations'
+        )
+        .doc(conversationId)
+        .onSnapshot(
+          (snapshot) => {
+            setConversationMeta(
+              snapshot.exists
+                ? snapshot.data()
+                : null
+            );
+          },
+          (error) => {
+            console.error(
+              'Konuşma bilgisi alınamadı:',
+              error
+            );
+          }
+        );
 
     return unsubscribe;
-  }, [conversationId]);
+  }, [
+    conversationId,
+  ]);
 
+  /*
+   * Bu kullanıcının "benden sil"
+   * kayıtlarını dinle.
+   */
   useEffect(() => {
-    const unsubscribe = db
-      .collection('messageDeletions')
-      .where(
-        'uid',
-        '==',
-        currentUser.uid
-      )
-      .onSnapshot(
-        (snapshot) => {
-          const ids = new Set();
+    const unsubscribe =
+      db
+        .collection(
+          'messageDeletions'
+        )
+        .where(
+          'uid',
+          '==',
+          currentUser.uid
+        )
+        .onSnapshot(
+          (snapshot) => {
+            const ids =
+              new Set();
 
-          snapshot.docs.forEach((doc) => {
-            const data = doc.data();
+            snapshot.docs.forEach(
+              (doc) => {
+                const data =
+                  doc.data();
 
-            if (
-              data.conversationId ===
-              conversationId
-            ) {
-              ids.add(data.messageId);
-            }
-          });
+                if (
+                  data.conversationId ===
+                  conversationId
+                ) {
+                  ids.add(
+                    data.messageId
+                  );
+                }
+              }
+            );
 
-          setDeletedMessageIds(ids);
-        },
-        (error) => {
-          console.error(
-            'Mesaj silme kayıtları alınamadı:',
-            error
-          );
-        }
-      );
+            setDeletedMessageIds(
+              ids
+            );
+            setDeletionsLoaded(true);
+          },
+          (error) => {
+            console.error(
+              'Mesaj silme kayıtları alınamadı:',
+              error
+            );
+
+            setDeletionsLoaded(true);
+          }
+        );
 
     return unsubscribe;
   }, [
     currentUser.uid,
     conversationId,
   ]);
-
   useEffect(() => {
-    const messageMap = new Map();
+    deletedMessageIdsRef.current =
+      deletedMessageIds;
+  }, [
+    deletedMessageIds,
+  ]);
 
-    const rebuildMessages = () => {
-      const next = Array.from(
-        messageMap.values()
-      )
-        .filter(
-          (message) =>
-            !message.deletedForEveryone
+  /*
+   * Mesajları canlı olarak al.
+   *
+   * İki sorgu kullanıyoruz:
+   * - benim gönderdiğim
+   * - bana gelen
+   */
+  /*
+ * Aktif sohbetin bütün mesajlarını
+ * tek Firestore sorgusuyla dinle.
+ *
+ * Böylece:
+ * - gönderilen mesaj
+ * - alınan mesaj
+ * - iletilen mesaj
+ *
+ * aynı stream üzerinden gelir.
+ *
+ * Bu yapı sohbet değiştirince
+ * mesajların kaybolmasını ve
+ * forward mesajının sidebar'da olup
+ * içeride görünmemesini engeller.
+ */
+  useEffect(() => {
+    if (!deletionsLoaded) {
+      return undefined;
+    }
+
+    setMessages([]);
+    setMessageMenu(null);
+
+    const unsubscribe =
+      db
+        .collection('messages')
+        .where(
+          'conversationId',
+          '==',
+          conversationId
         )
-        .filter(
-          (message) =>
-            !deletedMessageIds.has(message.id)
-        )
-        .sort((a, b) => {
-          const at =
-            a.createdAt?.toMillis
-              ? a.createdAt.toMillis()
-              : a.localCreatedAt || 0;
+        .onSnapshot(
+          (snapshot) => {
+            const next =
+              snapshot.docs
+                .map((doc) => ({
+                  id: doc.id,
+                  ...doc.data(),
+                }))
+                .filter(
+                  (message) =>
+                    !message.deletedForEveryone
+                )
+                .filter(
+                  (message) =>
+                    !deletedMessageIdsRef.current.has(
+                      message.id
+                    )
+                )
+                .sort((a, b) => {
+                  const at =
+                    a.createdAt?.toMillis
+                      ? a.createdAt.toMillis()
+                      : a.localCreatedAt || 0;
 
-          const bt =
-            b.createdAt?.toMillis
-              ? b.createdAt.toMillis()
-              : b.localCreatedAt || 0;
+                  const bt =
+                    b.createdAt?.toMillis
+                      ? b.createdAt.toMillis()
+                      : b.localCreatedAt || 0;
 
-          return at - bt;
-        });
+                  return at - bt;
+                });
 
-      setMessages(next);
-    };
-
-    const applySnapshot = (snapshot) => {
-      snapshot.docChanges().forEach(
-        (change) => {
-          if (change.type === 'removed') {
-            messageMap.delete(
-              change.doc.id
-            );
-          } else {
-            messageMap.set(
-              change.doc.id,
-              {
-                id: change.doc.id,
-                ...change.doc.data(),
-              }
+            setMessages(next);
+          },
+          (error) => {
+            console.error(
+              'Mesajlar alınamadı:',
+              error
             );
           }
-        }
-      );
+        );
 
-      rebuildMessages();
-    };
-
-    const unsubscribeSent = db
-      .collection('messages')
-      .where(
-        'conversationId',
-        '==',
-        conversationId
-      )
-      .where(
-        'senderId',
-        '==',
-        currentUser.uid
-      )
-      .onSnapshot(
-        applySnapshot,
-        (error) => {
-          console.error(
-            'Gönderilen mesajlar okunamadı:',
-            error
-          );
-        }
-      );
-
-    const unsubscribeReceived = db
-      .collection('messages')
-      .where(
-        'conversationId',
-        '==',
-        conversationId
-      )
-      .where(
-        'receiverId',
-        '==',
-        currentUser.uid
-      )
-      .onSnapshot(
-        applySnapshot,
-        (error) => {
-          console.error(
-            'Alınan mesajlar okunamadı:',
-            error
-          );
-        }
-      );
-
-    return () => {
-      unsubscribeSent();
-      unsubscribeReceived();
-    };
+    return unsubscribe;
   }, [
     conversationId,
-    currentUser.uid,
-    deletedMessageIds,
+    deletionsLoaded,
   ]);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({
       behavior: 'smooth',
     });
-  }, [messages.length]);
+  }, [
+    messages.length,
+  ]);
 
+  /*
+   * Menülerin dışına tıklanınca kapat.
+   */
   useEffect(() => {
-    const handleOutsideClick = (event) => {
-      if (
-        menuRef.current &&
-        !menuRef.current.contains(
-          event.target
-        )
-      ) {
-        setShowMenu(false);
-      }
+    const handleOutsideClick =
+      (event) => {
+        if (
+          menuRef.current &&
+          !menuRef.current.contains(
+            event.target
+          )
+        ) {
+          setShowMenu(false);
+        }
 
-      if (
-        messageMenuRef.current &&
-        !messageMenuRef.current.contains(
-          event.target
-        ) &&
-        !event.target.closest('.bubble')
-      ) {
-        setMessageMenu(null);
-      }
-    };
+        if (
+          messageMenuRef.current &&
+          !messageMenuRef.current.contains(
+            event.target
+          ) &&
+          !event.target.closest(
+            '.bubble'
+          )
+        ) {
+          setMessageMenu(null);
+        }
+      };
 
     document.addEventListener(
       'mousedown',
@@ -299,66 +423,148 @@ export default function Conversation({
     };
   }, []);
 
-  const isArchived = (
-    conversationMeta?.archivedBy || []
-  ).includes(currentUser.uid);
+  const isArchived =
+    (
+      conversationMeta?.archivedBy ||
+      []
+    ).includes(
+      currentUser.uid
+    );
 
-  const isPinned = (
-    conversationMeta?.pinnedBy || []
-  ).includes(currentUser.uid);
+  const isPinned =
+    (
+      conversationMeta?.pinnedBy ||
+      []
+    ).includes(
+      currentUser.uid
+    );
 
-  const isMuted = (
-    conversationMeta?.mutedBy || []
-  ).includes(currentUser.uid);
+  const isMuted =
+    (
+      conversationMeta?.mutedBy ||
+      []
+    ).includes(
+      currentUser.uid
+    );
 
-  const sendMessage = async (event) => {
-    event.preventDefault();
+  /*
+   * Mesaj gönder
+   */
+  const sendMessage =
+    async (event) => {
+      event.preventDefault();
 
-    const text = draft.trim();
+      const text =
+        draft.trim();
 
-    if (!text) {
-      return;
-    }
+      if (!text) {
+        return;
+      }
 
-    const messageId = db
-      .collection('messages')
-      .doc().id;
+      const messageId =
+        db
+          .collection(
+            'messages'
+          )
+          .doc().id;
 
-    setMessages((current) => [
-      ...current,
-      {
-        id: messageId,
-        conversationId,
-        text,
-        uid: currentUser.uid,
-        senderId: currentUser.uid,
-        receiverId: otherUser.uid,
-        pending: true,
-        localCreatedAt: Date.now(),
-      },
-    ]);
-
-    setDraft('');
-
-    try {
-      await ensureConversation();
-
-      await db
-        .collection('conversations')
-        .doc(conversationId)
-        .set(
+      /*
+       * Kullanıcı beklemesin.
+       * Mesajı anında ekrana koy.
+       */
+      setMessages(
+        (current) => [
+          ...current,
           {
-            lastMessage: text,
+            id: messageId,
+            conversationId,
+            text,
+            type: 'text',
+
+            uid:
+              currentUser.uid,
+
+            senderId:
+              currentUser.uid,
+
+            receiverId:
+              otherUser.uid,
+
+            pending: true,
+
+            localCreatedAt:
+              Date.now(),
+
+            replyTo:
+              replyTo
+                ? {
+                  messageId:
+                    replyTo.id,
+
+                  senderId:
+                    replyTo.senderId ||
+                    replyTo.uid,
+
+                  senderName:
+                    replyTo.userName ||
+                    otherUser.displayName ||
+                    'Kullanıcı',
+
+                  text:
+                    getMessageText(
+                      replyTo
+                    ),
+                }
+                : null,
+          },
+        ]
+      );
+
+      setDraft('');
+      setReplyTo(null);
+      setShowEmojiPicker(false);
+      setShowGifPicker(false);
+      try {
+        const conversationRef =
+          db
+            .collection('conversations')
+            .doc(conversationId);
+
+        const messageRef =
+          db
+            .collection('messages')
+            .doc(messageId);
+
+        const batch =
+          db.batch();
+
+        batch.set(
+          conversationRef,
+          {
+            conversationId,
+
+            participants: [
+              currentUser.uid,
+              otherUser.uid,
+            ],
+
+            lastMessage:
+              text,
+
             lastSenderId:
               currentUser.uid,
+
             lastMessageAt:
               firebase.firestore.FieldValue.serverTimestamp(),
+
             updatedAt:
               firebase.firestore.FieldValue.serverTimestamp(),
+
             deletedFor:
               firebase.firestore.FieldValue.arrayRemove(
                 currentUser.uid
               ),
+
             archivedBy:
               firebase.firestore.FieldValue.arrayRemove(
                 currentUser.uid
@@ -369,90 +575,318 @@ export default function Conversation({
           }
         );
 
-      await db
-        .collection('messages')
-        .doc(messageId)
-        .set({
-          conversationId,
-          text,
-          uid: currentUser.uid,
-          senderId: currentUser.uid,
-          receiverId: otherUser.uid,
-          userName:
-            currentUser.displayName ||
-            'CyberTalk Kullanıcısı',
-          photoURL:
-            currentUser.photoURL || '',
-          createdAt:
-            firebase.firestore.FieldValue.serverTimestamp(),
-        });
-    } catch (error) {
-      console.error(
-        'Mesaj gönderilemedi:',
-        error
-      );
-
-      setMessages((current) =>
-        current.filter(
-          (message) =>
-            message.id !== messageId
-        )
-      );
-
-      setDraft(text);
-    }
-  };
-
-  const toggleFlag = async (
-    field,
-    enabled
-  ) => {
-    try {
-      await ensureConversation();
-
-      await db
-        .collection('conversations')
-        .doc(conversationId)
-        .set(
+        batch.set(
+          messageRef,
           {
-            [field]: enabled
-              ? firebase.firestore.FieldValue.arrayUnion(
-                currentUser.uid
-              )
-              : firebase.firestore.FieldValue.arrayRemove(
-                currentUser.uid
-              ),
-            updatedAt:
+            conversationId,
+
+            text,
+
+            type: 'text',
+
+            uid:
+              currentUser.uid,
+
+            senderId:
+              currentUser.uid,
+
+            receiverId:
+              otherUser.uid,
+
+            userName:
+              currentUser.displayName ||
+              'CyberTalk Kullanıcısı',
+
+            photoURL:
+              currentUser.photoURL ||
+              '',
+
+            replyTo:
+              replyTo
+                ? {
+                  messageId:
+                    replyTo.id,
+
+                  senderId:
+                    replyTo.senderId ||
+                    replyTo.uid,
+
+                  senderName:
+                    replyTo.userName ||
+                    otherUser.displayName ||
+                    'Kullanıcı',
+
+                  text:
+                    getMessageText(
+                      replyTo
+                    ),
+                }
+                : null,
+
+            createdAt:
               firebase.firestore.FieldValue.serverTimestamp(),
-          },
-          {
-            merge: true,
           }
         );
 
-      setShowMenu(false);
+        await batch.commit();
 
-      if (
-        field === 'archivedBy' &&
-        enabled
-      ) {
-        onCloseConversation?.();
+        setMessages(
+          (current) =>
+            current.map(
+              (message) =>
+                message.id === messageId
+                  ? {
+                    ...message,
+                    pending:
+                      false,
+                  }
+                  : message
+            )
+        );
+      } catch (error) {
+        console.error(
+          'Mesaj gönderilemedi:',
+          error
+        );
+
+        setMessages(
+          (current) =>
+            current.filter(
+              (message) =>
+                message.id !==
+                messageId
+            )
+        );
+
+        setDraft(text);
       }
-    } catch (error) {
-      console.error(
-        'Sohbet ayarı değiştirilemedi:',
-        error
-      );
-    }
-  };
+    };
 
+  /*
+   * Emoji seç
+   */
+  const handleEmojiSelect =
+    (emoji) => {
+      setDraft(
+        (current) =>
+          `${current}${emoji}`
+      );
+
+      setShowEmojiPicker(
+        false
+      );
+    };
+
+  /*
+   * GIF gönder
+   */
+  const sendGif =
+    async (gif) => {
+      setShowGifPicker(
+        false
+      );
+
+      const messageId =
+        db
+          .collection(
+            'messages'
+          )
+          .doc().id;
+
+      setMessages(
+        (current) => [
+          ...current,
+          {
+            id: messageId,
+            conversationId,
+            type: 'gif',
+            gifUrl: gif.url,
+            text: '',
+            uid:
+              currentUser.uid,
+            senderId:
+              currentUser.uid,
+            receiverId:
+              otherUser.uid,
+            pending: true,
+            localCreatedAt:
+              Date.now(),
+          },
+        ]
+      );
+
+      try {
+        await ensureConversation();
+
+        await db
+          .collection(
+            'conversations'
+          )
+          .doc(conversationId)
+          .set(
+            {
+              lastMessage:
+                'GIF',
+
+              lastSenderId:
+                currentUser.uid,
+
+              lastMessageAt:
+                firebase.firestore.FieldValue.serverTimestamp(),
+
+              updatedAt:
+                firebase.firestore.FieldValue.serverTimestamp(),
+
+              deletedFor:
+                firebase.firestore.FieldValue.arrayRemove(
+                  currentUser.uid
+                ),
+
+              archivedBy:
+                firebase.firestore.FieldValue.arrayRemove(
+                  currentUser.uid
+                ),
+            },
+            {
+              merge: true,
+            }
+          );
+
+        await db
+          .collection(
+            'messages'
+          )
+          .doc(messageId)
+          .set({
+            conversationId,
+
+            type: 'gif',
+
+            gifUrl:
+              gif.url,
+
+            gifTitle:
+              gif.title ||
+              'GIF',
+
+            text: '',
+
+            uid:
+              currentUser.uid,
+
+            senderId:
+              currentUser.uid,
+
+            receiverId:
+              otherUser.uid,
+
+            userName:
+              currentUser.displayName ||
+              'CyberTalk Kullanıcısı',
+
+            photoURL:
+              currentUser.photoURL ||
+              '',
+
+            createdAt:
+              firebase.firestore.FieldValue.serverTimestamp(),
+          });
+
+        setMessages(
+          (current) =>
+            current.map(
+              (message) =>
+                message.id ===
+                  messageId
+                  ? {
+                    ...message,
+                    pending:
+                      false,
+                  }
+                  : message
+            )
+        );
+      } catch (error) {
+        console.error(
+          'GIF gönderilemedi:',
+          error
+        );
+
+        setMessages(
+          (current) =>
+            current.filter(
+              (message) =>
+                message.id !==
+                messageId
+            )
+        );
+      }
+    };
+
+  /*
+   * Sabitle / sessize al / arşiv
+   */
+  const toggleFlag =
+    async (
+      field,
+      enabled
+    ) => {
+      try {
+        await ensureConversation();
+
+        await db
+          .collection(
+            'conversations'
+          )
+          .doc(conversationId)
+          .set(
+            {
+              [field]:
+                enabled
+                  ? firebase.firestore.FieldValue.arrayUnion(
+                    currentUser.uid
+                  )
+                  : firebase.firestore.FieldValue.arrayRemove(
+                    currentUser.uid
+                  ),
+
+              updatedAt:
+                firebase.firestore.FieldValue.serverTimestamp(),
+            },
+            {
+              merge: true,
+            }
+          );
+
+        setShowMenu(false);
+
+        if (
+          field ===
+          'archivedBy' &&
+          enabled
+        ) {
+          onCloseConversation?.();
+        }
+      } catch (error) {
+        console.error(
+          'Sohbet ayarı değiştirilemedi:',
+          error
+        );
+      }
+    };
+
+  /*
+   * Sohbeti sadece benden kaldır.
+   */
   const deleteConversationForMe =
     async () => {
       try {
         await ensureConversation();
 
         await db
-          .collection('conversations')
+          .collection(
+            'conversations'
+          )
           .doc(conversationId)
           .set(
             {
@@ -467,6 +901,7 @@ export default function Conversation({
           );
 
         setShowMenu(false);
+
         onCloseConversation?.();
       } catch (error) {
         console.error(
@@ -476,6 +911,9 @@ export default function Conversation({
       }
     };
 
+  /*
+   * Mesajı sadece benden sil.
+   */
   const deleteMessageForMe =
     async (message) => {
       try {
@@ -483,24 +921,35 @@ export default function Conversation({
           `${message.id}_${currentUser.uid}`;
 
         await db
-          .collection('messageDeletions')
+          .collection(
+            'messageDeletions'
+          )
           .doc(deletionId)
           .set({
-            messageId: message.id,
+            messageId:
+              message.id,
+
             conversationId,
-            uid: currentUser.uid,
+
+            uid:
+              currentUser.uid,
+
             createdAt:
               firebase.firestore.FieldValue.serverTimestamp(),
           });
 
-        setMessages((current) =>
-          current.filter(
-            (item) =>
-              item.id !== message.id
-          )
+        setMessages(
+          (current) =>
+            current.filter(
+              (item) =>
+                item.id !==
+                message.id
+            )
         );
 
-        setMessageMenu(null);
+        setMessageMenu(
+          null
+        );
       } catch (error) {
         console.error(
           'Mesaj benden silinemedi:',
@@ -509,6 +958,9 @@ export default function Conversation({
       }
     };
 
+  /*
+   * Kendi mesajını herkesten sil.
+   */
   const deleteMessageForEveryone =
     async (message) => {
       const sender =
@@ -516,7 +968,8 @@ export default function Conversation({
         message.uid;
 
       if (
-        sender !== currentUser.uid
+        sender !==
+        currentUser.uid
       ) {
         return;
       }
@@ -526,19 +979,25 @@ export default function Conversation({
           .collection('messages')
           .doc(message.id)
           .update({
-            deletedForEveryone: true,
+            deletedForEveryone:
+              true,
+
             deletedAt:
               firebase.firestore.FieldValue.serverTimestamp(),
           });
 
-        setMessages((current) =>
-          current.filter(
-            (item) =>
-              item.id !== message.id
-          )
+        setMessages(
+          (current) =>
+            current.filter(
+              (item) =>
+                item.id !==
+                message.id
+            )
         );
 
-        setMessageMenu(null);
+        setMessageMenu(
+          null
+        );
       } catch (error) {
         console.error(
           'Mesaj herkesten silinemedi:',
@@ -547,64 +1006,483 @@ export default function Conversation({
       }
     };
 
-  const openMessageMenu = (
-    event,
-    message
-  ) => {
-    event.stopPropagation();
+  /*
+   * Reaction
+   *
+   * Şimdilik mesaj belgesi üzerinde
+   * reactions map kullanıyoruz.
+   */
+  /*
+   * Mesaj reaction
+   */
+  const handleReaction =
+    async (
+      message,
+      emoji
+    ) => {
+      if (reactionLoading) {
+        return;
+      }
 
-    const rect =
-      event.currentTarget.getBoundingClientRect();
+      setReactionLoading(true);
 
-    const menuWidth = 190;
-    const menuHeight = 92;
-    const gap = 8;
+      try {
+        const messageRef =
+          db
+            .collection('messages')
+            .doc(message.id);
 
-    const maxLeft =
-      window.innerWidth -
-      menuWidth -
-      12;
+        const currentReactions =
+          message.reactions || {};
 
-    const desiredLeft =
-      (
-        message.senderId ||
-        message.uid
-      ) === currentUser.uid
-        ? rect.right - menuWidth
-        : rect.left;
+        const currentReaction =
+          currentReactions[
+          currentUser.uid
+          ];
 
-    const left = Math.max(
-      12,
-      Math.min(
-        desiredLeft,
-        maxLeft
-      )
-    );
+        const nextReactions = {
+          ...currentReactions,
+        };
 
-    const desiredTop =
-      rect.bottom + gap;
+        if (
+          currentReaction === emoji
+        ) {
+          delete nextReactions[
+            currentUser.uid
+          ];
+        } else {
+          nextReactions[
+            currentUser.uid
+          ] = emoji;
+        }
 
-    const top =
-      desiredTop + menuHeight >
-        window.innerHeight
-        ? Math.max(
+        await messageRef.update({
+          reactions:
+            nextReactions,
+        });
+
+        setMessages(
+          (current) =>
+            current.map(
+              (item) =>
+                item.id === message.id
+                  ? {
+                    ...item,
+                    reactions:
+                      nextReactions,
+                  }
+                  : item
+            )
+        );
+
+        setMessageMenu(null);
+      } catch (error) {
+        console.error(
+          'Reaction kaydedilemedi:',
+          error
+        );
+
+        alert(
+          `Reaction kaydedilemedi:\n${error.code || ''
+          }\n${error.message ||
+          error
+          }`
+        );
+      } finally {
+        setReactionLoading(false);
+      }
+    };
+  /*
+   * Clipboard
+   */
+  const copyMessage =
+    async (message) => {
+      const value =
+        getMessageText(
+          message
+        );
+
+      if (!value) {
+        return;
+      }
+
+      try {
+        await navigator.clipboard.writeText(
+          value
+        );
+      } catch (error) {
+        console.error(
+          'Mesaj kopyalanamadı:',
+          error
+        );
+      }
+
+      setMessageMenu(
+        null
+      );
+    };
+
+  /*
+   * Cevapla
+   */
+  const startReply =
+    (message) => {
+      setReplyTo(
+        message
+      );
+
+      setMessageMenu(
+        null
+      );
+
+      setShowEmojiPicker(
+        false
+      );
+
+      setShowGifPicker(
+        false
+      );
+    };
+
+  /*
+   * Forward penceresini aç.
+   */
+  const openForward =
+    async (message) => {
+      setForwardMessage(
+        message
+      );
+
+      setMessageMenu(
+        null
+      );
+
+      setForwardLoading(
+        true
+      );
+
+      try {
+        const snapshot =
+          await db
+            .collection('conversations')
+            .where(
+              'participants',
+              'array-contains',
+              currentUser.uid
+            )
+            .get();
+
+        const contactedUserIds =
+          new Set();
+
+        snapshot.docs.forEach(
+          (doc) => {
+            const data =
+              doc.data();
+
+            const participants =
+              data.participants || [];
+
+            participants.forEach(
+              (uid) => {
+                if (
+                  uid !==
+                  currentUser.uid
+                ) {
+                  contactedUserIds.add(
+                    uid
+                  );
+                }
+              }
+            );
+          }
+        );
+
+        contactedUserIds.delete(
+          otherUser.uid
+        );
+
+        const userResults =
+          await Promise.all(
+            Array.from(
+              contactedUserIds
+            ).map(
+              async (uid) => {
+                const userSnapshot =
+                  await db
+                    .collection('users')
+                    .doc(uid)
+                    .get();
+
+                if (
+                  !userSnapshot.exists
+                ) {
+                  return null;
+                }
+
+                return {
+                  uid:
+                    userSnapshot.id,
+                  ...userSnapshot.data(),
+                };
+              }
+            )
+          );
+
+        setUsersForForward(
+          userResults.filter(
+            Boolean
+          )
+        );
+      } catch (error) {
+        console.error(
+          'Forward kullanıcıları alınamadı:',
+          error
+        );
+
+        setUsersForForward(
+          []
+        );
+      } finally {
+        setForwardLoading(
+          false
+        );
+      }
+    };
+
+  /*
+   * Mesajı başka kişiye ilet.
+   */
+  /*
+   * Mesajı başka kullanıcıya ilet
+   */
+  const forwardToUser =
+    async (targetUser) => {
+      if (!forwardMessage) {
+        return;
+      }
+
+      const targetConversationId =
+        getConversationId(
+          currentUser.uid,
+          targetUser.uid
+        );
+
+      const targetConversationRef =
+        db
+          .collection(
+            'conversations'
+          )
+          .doc(
+            targetConversationId
+          );
+
+      const targetMessageRef =
+        db
+          .collection('messages')
+          .doc();
+
+      try {
+        const batch =
+          db.batch();
+
+        batch.set(
+          targetConversationRef,
+          {
+            conversationId:
+              targetConversationId,
+
+            participants: [
+              currentUser.uid,
+              targetUser.uid,
+            ],
+
+            lastMessage:
+              `↗ ${getMessageText(
+                forwardMessage
+              )}`,
+
+            lastSenderId:
+              currentUser.uid,
+
+            lastMessageAt:
+              firebase.firestore.FieldValue.serverTimestamp(),
+
+            updatedAt:
+              firebase.firestore.FieldValue.serverTimestamp(),
+
+            deletedFor:
+              firebase.firestore.FieldValue.arrayRemove(
+                currentUser.uid
+              ),
+
+            archivedBy:
+              firebase.firestore.FieldValue.arrayRemove(
+                currentUser.uid
+              ),
+          },
+          {
+            merge: true,
+          }
+        );
+
+        batch.set(
+          targetMessageRef,
+          {
+            conversationId:
+              targetConversationId,
+
+            type:
+              'forward',
+
+            text:
+              forwardMessage.text ||
+              getMessageText(
+                forwardMessage
+              ),
+
+            forwardedFrom: {
+              messageId:
+                forwardMessage.id,
+
+              conversationId,
+
+              senderId:
+                forwardMessage.senderId ||
+                forwardMessage.uid,
+
+              senderName:
+                forwardMessage.userName ||
+                otherUser.displayName ||
+                'Kullanıcı',
+
+              originalType:
+                forwardMessage.type ||
+                'text',
+
+              originalGifUrl:
+                forwardMessage.gifUrl ||
+                '',
+            },
+
+            uid:
+              currentUser.uid,
+
+            senderId:
+              currentUser.uid,
+
+            receiverId:
+              targetUser.uid,
+
+            userName:
+              currentUser.displayName ||
+              'CyberTalk Kullanıcısı',
+
+            photoURL:
+              currentUser.photoURL ||
+              '',
+
+            createdAt:
+              firebase.firestore.FieldValue.serverTimestamp(),
+          }
+        );
+
+        await batch.commit();
+
+        setForwardMessage(null);
+
+        setUsersForForward([]);
+
+      } catch (error) {
+        console.error(
+          'Mesaj iletilemedi:',
+          error
+        );
+
+        alert(
+          `Mesaj iletilemedi:\n${error.code || ''
+          }\n${error.message ||
+          error
+          }`
+        );
+      }
+    };
+  /*
+   * Mesaj menüsünü ekran içinde tut.
+   */
+  const openMessageMenu =
+    (
+      event,
+      message
+    ) => {
+      event.stopPropagation();
+
+      const rect =
+        event.currentTarget.getBoundingClientRect();
+
+      const menuWidth =
+        210;
+
+      const menuHeight =
+        260;
+
+      const gap = 8;
+
+      const maxLeft =
+        window.innerWidth -
+        menuWidth -
+        12;
+
+      const desiredLeft =
+        (
+          message.senderId ||
+          message.uid
+        ) ===
+          currentUser.uid
+          ? rect.right -
+          menuWidth
+          : rect.left;
+
+      const left =
+        Math.max(
           12,
-          rect.top -
-          menuHeight -
-          gap
-        )
-        : desiredTop;
+          Math.min(
+            desiredLeft,
+            maxLeft
+          )
+        );
 
-    setMessageMenu({
-      id: message.id,
-      top,
-      left,
-    });
-  };
+      const desiredTop =
+        rect.bottom +
+        gap;
+
+      const top =
+        desiredTop +
+          menuHeight >
+          window.innerHeight
+          ? Math.max(
+            12,
+            rect.top -
+            menuHeight -
+            gap
+          )
+          : desiredTop;
+
+      setMessageMenu({
+        id:
+          message.id,
+
+        top,
+
+        left,
+      });
+    };
 
   return (
     <div className="conversation">
+
       <header className="conversation-header">
+
         <button
           type="button"
           className="conversation-person profile-trigger"
@@ -613,7 +1491,9 @@ export default function Conversation({
           }
           title="Profili görüntüle"
         >
-          <Avatar user={otherUser} />
+          <Avatar
+            user={otherUser}
+          />
 
           <div>
             <strong>
@@ -629,6 +1509,7 @@ export default function Conversation({
         </button>
 
         <div className="conversation-actions">
+
           <div
             className="conversation-menu-wrap"
             ref={menuRef}
@@ -636,10 +1517,13 @@ export default function Conversation({
             <button
               type="button"
               className="icon-btn"
-              aria-expanded={showMenu}
+              aria-expanded={
+                showMenu
+              }
               onClick={() =>
                 setShowMenu(
-                  (value) => !value
+                  (value) =>
+                    !value
                 )
               }
             >
@@ -648,10 +1532,14 @@ export default function Conversation({
 
             {showMenu && (
               <div className="conversation-menu conversation-menu-rich">
+
                 <button
                   type="button"
                   onClick={() => {
-                    setShowMenu(false);
+                    setShowMenu(
+                      false
+                    );
+
                     onViewProfile?.();
                   }}
                 >
@@ -713,21 +1601,28 @@ export default function Conversation({
                 <button
                   type="button"
                   onClick={() => {
-                    setShowMenu(false);
+                    setShowMenu(
+                      false
+                    );
+
                     onCloseConversation?.();
                   }}
                 >
                   Sohbeti kapat
                 </button>
+
               </div>
             )}
           </div>
+
         </div>
       </header>
 
       <div className="messages">
+
         {!messages.length ? (
           <div className="conversation-empty">
+
             <div className="big-lock">
               🔒
             </div>
@@ -741,130 +1636,360 @@ export default function Conversation({
                 'Kullanıcı'} ile
               konuşmayı başlat.
             </p>
+
           </div>
         ) : (
-          messages.map((message) => {
-            const mine =
-              (
-                message.senderId ||
-                message.uid
-              ) === currentUser.uid;
+          messages.map(
+            (message) => {
+              const mine =
+                (
+                  message.senderId ||
+                  message.uid
+                ) ===
+                currentUser.uid;
 
-            const active =
-              messageMenu?.id ===
-              message.id;
+              const active =
+                messageMenu?.id ===
+                message.id;
 
-            return (
-              <div
-                key={message.id}
-                className={`bubble-row ${mine
-                    ? 'mine'
-                    : 'theirs'
-                  }`}
-              >
+              const formattedTime =
+                message.pending
+                  ? ''
+                  : formatMessageTime(
+                    message.createdAt
+                  );
+
+              return (
                 <div
-                  className={`bubble ${mine
-                      ? 'mine'
-                      : 'theirs'
-                    }`}
-                  onClick={(event) => {
-                    if (
-                      message.pending
-                    ) {
-                      return;
-                    }
-
-                    openMessageMenu(
-                      event,
-                      message
-                    );
-                  }}
+                  key={
+                    message.id
+                  }
+                  className="message-bubble-wrap"
                 >
-                  <p>
-                    {message.text}
-                  </p>
 
-                  <span>
-                    {message.pending
-                      ? 'Gönderiliyor...'
-                      : formatMessageTime(
-                        message.createdAt
-                      )}
-                  </span>
-                </div>
-
-                {active && (
-                  <div
-                    ref={
-                      messageMenuRef
-                    }
-                    className="message-actions-menu"
-                    style={{
-                      position:
-                        'fixed',
-                      top:
-                        messageMenu.top,
-                      left:
-                        messageMenu.left,
-                      zIndex: 9999,
+                  <MessageBubble
+                    message={{
+                      ...message,
+                      formattedTime,
                     }}
-                  >
-                    <button
-                      type="button"
-                      onClick={() =>
-                        deleteMessageForMe(
-                          message
-                        )
-                      }
-                    >
-                      Benden sil
-                    </button>
+                    mine={mine}
+                    active={active}
+                    currentUser={
+                      currentUser
+                    }
+                    onOpenMenu={
+                      openMessageMenu
+                    }
+                  />
 
-                    {mine && (
-                      <button
-                        type="button"
-                        className="danger-menu-item"
-                        onClick={() =>
-                          deleteMessageForEveryone(
-                            message
-                          )
+                  {active && (
+                    <div
+                      ref={
+                        messageMenuRef
+                      }
+                      className="message-actions-menu"
+                      style={{
+                        position:
+                          'fixed',
+
+                        top:
+                          messageMenu.top,
+
+                        left:
+                          messageMenu.left,
+
+                        zIndex:
+                          9999,
+                      }}
+                    >
+                      <MessageActions
+                        message={
+                          message
                         }
-                      >
-                        Herkesten sil
-                      </button>
-                    )}
-                  </div>
-                )}
-              </div>
-            );
-          })
+
+                        mine={
+                          mine
+                        }
+
+                        onReply={
+                          startReply
+                        }
+
+                        onForward={
+                          openForward
+                        }
+
+                        onCopy={
+                          copyMessage
+                        }
+
+                        onReaction={
+                          handleReaction
+                        }
+
+                        onDeleteForMe={
+                          deleteMessageForMe
+                        }
+
+                        onDeleteForEveryone={
+                          deleteMessageForEveryone
+                        }
+                      />
+                    </div>
+                  )}
+
+                </div>
+              );
+            }
+          )
         )}
 
-        <div ref={endRef} />
+        <div
+          ref={endRef}
+        />
       </div>
 
       <form
         className="composer"
-        onSubmit={sendMessage}
+        onSubmit={
+          sendMessage
+        }
       >
-        <input
-          value={draft}
-          onChange={(event) =>
-            setDraft(
-              event.target.value
+
+        {replyTo && (
+          <div className="reply-composer">
+
+            <div>
+              <strong>
+                {replyTo.userName ||
+                  otherUser.displayName ||
+                  'Kullanıcı'}
+              </strong>
+
+              <span>
+                {getMessageText(
+                  replyTo
+                )}
+              </span>
+            </div>
+
+            <button
+              type="button"
+              onClick={() =>
+                setReplyTo(
+                  null
+                )
+              }
+              aria-label="Cevabı kapat"
+            >
+              ×
+            </button>
+
+          </div>
+        )}
+
+        {showEmojiPicker && (
+          <EmojiPicker
+            onSelect={
+              handleEmojiSelect
+            }
+            onClose={() =>
+              setShowEmojiPicker(
+                false
+              )
+            }
+          />
+        )}
+
+        {showGifPicker && (
+          <GifPicker
+            onSelect={
+              sendGif
+            }
+            onClose={() =>
+              setShowGifPicker(
+                false
+              )
+            }
+          />
+        )}
+
+        <div
+          className="composer-main"
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
+            width: '100%',
+            flexWrap: 'nowrap',
+          }}
+        >
+
+          <div className="composer-actions">
+
+            <button
+              type="button"
+              className="composer-plus-btn"
+              aria-label="Ekler"
+              aria-expanded={showComposerTools}
+              onClick={() => {
+                setShowComposerTools(
+                  (value) => !value
+                );
+
+                setShowEmojiPicker(false);
+                setShowGifPicker(false);
+              }}
+            >
+              +
+            </button>
+
+            {showComposerTools && (
+              <ComposerTools
+                onEmoji={() => {
+                  setShowEmojiPicker(true);
+                  setShowGifPicker(false);
+                }}
+                onGif={() => {
+                  setShowGifPicker(true);
+                  setShowEmojiPicker(false);
+                }}
+                onClose={() => {
+                  setShowComposerTools(false);
+                }}
+              />
+            )}
+
+          </div>
+
+          <input
+            value={draft}
+            onChange={(event) =>
+              setDraft(
+                event.target.value
+              )
+            }
+            placeholder={
+              replyTo
+                ? 'Cevabını yaz...'
+                : 'Mesaj yaz...'
+            }
+            style={{
+              flex: '1 1 auto',
+              minWidth: 0,
+            }}
+          />
+
+          <button
+            type="submit"
+            className="send-btn"
+            disabled={
+              !draft.trim()
+            }
+            style={{
+              flex: '0 0 auto',
+            }}
+          >
+            ➤
+          </button>
+
+        </div>
+
+      </form>
+
+      {forwardMessage && (
+        <div
+          className="forward-overlay"
+          onClick={() =>
+            setForwardMessage(
+              null
             )
           }
-          placeholder="Mesaj yaz..."
-        />
-
-        <button
-          type="submit"
-          className="send-btn"
-          disabled={!draft.trim()}
         >
-          ➤
-        </button>
-      </form>
+          <div
+            className="forward-panel"
+            onClick={(event) =>
+              event.stopPropagation()
+            }
+          >
+
+            <div className="forward-header">
+              <div>
+                <strong>
+                  Mesajı ilet
+                </strong>
+
+                <span>
+                  Kime göndermek
+                  istiyorsun?
+                </span>
+              </div>
+
+              <button
+                type="button"
+                onClick={() =>
+                  setForwardMessage(
+                    null
+                  )
+                }
+              >
+                ×
+              </button>
+            </div>
+
+            {forwardLoading ? (
+              <div className="forward-state">
+                Kullanıcılar
+                yükleniyor...
+              </div>
+            ) : !usersForForward.length ? (
+              <div className="forward-state">
+                İletilecek başka
+                kullanıcı bulunamadı.
+              </div>
+            ) : (
+              <div className="forward-users">
+
+                {usersForForward.map(
+                  (user) => (
+                    <button
+                      key={
+                        user.uid
+                      }
+                      type="button"
+                      className="forward-user"
+                      onClick={() =>
+                        forwardToUser(
+                          user
+                        )
+                      }
+                    >
+                      <Avatar
+                        user={user}
+                      />
+
+                      <div>
+                        <strong>
+                          {user.displayName ||
+                            'CyberTalk Kullanıcısı'}
+                        </strong>
+
+                        <span>
+                          @{user.username ||
+                            'kullanici'}
+                        </span>
+                      </div>
+                    </button>
+                  )
+                )}
+
+              </div>
+            )}
+
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }

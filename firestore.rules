@@ -28,6 +28,15 @@ service cloud.firestore {
         ).data.participants;
     }
 
+    function conversationParticipantAfter(
+      conversationId
+    ) {
+      return signedIn()
+        && request.auth.uid in getAfter(
+          /databases/$(database)/documents/conversations/$(conversationId)
+        ).data.participants;
+    }
+
     match /users/{userId} {
       allow read: if signedIn();
 
@@ -82,15 +91,37 @@ service cloud.firestore {
     }
 
     match /messages/{messageId} {
+
+      /*
+       * Mesajları sadece bağlı oldukları
+       * sohbetin katılımcıları okuyabilir.
+       *
+       * Bu özellikle Conversation.js içindeki:
+       *
+       * messages
+       *   .where('conversationId', '==', conversationId)
+       *
+       * sorgusunun realtime çalışması için kullanılır.
+       */
       allow read: if signedIn()
-        && (
-          resource.data.senderId ==
-            request.auth.uid
-          ||
-          resource.data.receiverId ==
-            request.auth.uid
+        && conversationParticipant(
+          resource.data.conversationId
         );
 
+      /*
+       * Yeni mesaj:
+       *
+       * - mesajı oluşturan kullanıcı giriş yapmış olmalı
+       * - uid kendi UID'si olmalı
+       * - senderId kendi UID'si olmalı
+       * - receiverId string olmalı
+       * - conversationId string olmalı
+       * - kullanıcı mevcut sohbetin katılımcısı olmalı
+       *
+       * Yeni sohbet oluşturulurken aynı batch
+       * içerisinde conversation oluşturuluyorsa
+       * conversationParticipantAfter() da kabul edilir.
+       */
       allow create: if signedIn()
         && request.resource.data.uid ==
            request.auth.uid
@@ -98,25 +129,73 @@ service cloud.firestore {
            request.auth.uid
         && request.resource.data.receiverId is string
         && request.resource.data.conversationId is string
-        && conversationParticipant(
-          request.resource.data.conversationId
+        && (
+          conversationParticipant(
+            request.resource.data.conversationId
+          )
+          ||
+          conversationParticipantAfter(
+            request.resource.data.conversationId
+          )
         );
 
+      /*
+       * Mesaj sahibi:
+       * herkesten silme alanlarını değiştirebilir.
+       *
+       * Sohbet katılımcısı:
+       * kendi reaction alanını değiştirebilir.
+       */
       allow update: if signedIn()
-        && resource.data.senderId ==
-           request.auth.uid
-        && request.resource.data
-          .diff(resource.data)
-          .affectedKeys()
-          .hasOnly([
-            'deletedForEveryone',
-            'deletedAt'
-          ]);
+        && (
+          (
+            resource.data.senderId ==
+              request.auth.uid
+
+            && request.resource.data
+              .diff(resource.data)
+              .affectedKeys()
+              .hasOnly([
+                'deletedForEveryone',
+                'deletedAt'
+              ])
+          )
+
+          ||
+
+          (
+            conversationParticipant(
+              resource.data.conversationId
+            )
+
+            && request.resource.data
+              .diff(resource.data)
+              .affectedKeys()
+              .hasOnly([
+                'reactions'
+              ])
+
+            && request.resource.data
+              .get('reactions', {})
+              .diff(
+                resource.data
+                  .get('reactions', {})
+              )
+              .affectedKeys()
+              .hasOnly([
+                request.auth.uid
+              ])
+          )
+        );
 
       allow delete: if false;
     }
 
+    /*
+     * "Benden sil" kayıtları.
+     */
     match /messageDeletions/{deletionId} {
+
       allow read: if signedIn()
         && resource.data.uid ==
            request.auth.uid;
