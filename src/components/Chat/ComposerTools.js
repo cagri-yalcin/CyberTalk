@@ -3,6 +3,7 @@ import React from 'react';
 export default function ComposerTools({
     onEmoji,
     onGif,
+    onPhoto,
     onClose,
 }) {
     return (
@@ -62,19 +63,18 @@ export default function ComposerTools({
 
             <button
                 type="button"
-                className="composer-tool-item disabled"
-                disabled
+                className="composer-tool-item"
+                onClick={() => {
+                    onPhoto();
+                    onClose();
+                }}
             >
                 <span className="composer-tool-icon">
                     🖼️
                 </span>
 
                 <span>
-                    Fotoğraf / Video
-
-                    <small>
-                        Yakında
-                    </small>
+                    Fotoğraf
                 </span>
             </button>
 

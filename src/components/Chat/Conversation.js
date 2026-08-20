@@ -10,6 +10,10 @@ import {
 } from '../../services/firebase';
 
 import {
+  uploadToCloudinary,
+} from '../../services/cloudinary';
+
+import {
   getConversationId,
   formatMessageTime,
 } from '../../services/chat';
@@ -91,6 +95,16 @@ export default function Conversation({
   ] = useState('');
 
   const [
+    selectedPhotos,
+    setSelectedPhotos,
+  ] = useState([]);
+
+  const [
+    previewPhoto,
+    setPreviewPhoto,
+  ] = useState(null);
+
+  const [
     conversationMeta,
     setConversationMeta,
   ] = useState(null);
@@ -122,6 +136,8 @@ export default function Conversation({
     showComposerTools,
     setShowComposerTools,
   ] = useState(false);
+
+  const photoInputRef = useRef(null);
 
   const [
     deletionsLoaded,
@@ -450,6 +466,12 @@ export default function Conversation({
   /*
    * Mesaj gönder
    */
+  /*
+   * Metin + fotoğraf(lar) gönder
+    */
+  /*
+* Metin + fotoğraf(lar) gönder
+*/
   const sendMessage =
     async (event) => {
       event.preventDefault();
@@ -457,66 +479,257 @@ export default function Conversation({
       const text =
         draft.trim();
 
-      if (!text) {
+      const hasPhotos =
+        selectedPhotos.length > 0;
+
+      if (!text && !hasPhotos) {
         return;
       }
 
       const messageId =
         db
-          .collection(
-            'messages'
-          )
+          .collection('messages')
           .doc().id;
 
       /*
-       * Kullanıcı beklemesin.
-       * Mesajı anında ekrana koy.
+       * FOTOĞRAF GÖNDERİMİ
+       *
+       * Fotoğrafları önce Cloudinary'ye
+       * yükle. Firestore'a ancak upload
+       * başarılı olduktan sonra yaz.
+       *
+       * Böylece optimistic/pending
+       * fotoğraf mesajı snapshot tarafından
+       * silinemez.
        */
+      if (hasPhotos) {
+        try {
+          const conversationRef =
+            db
+              .collection(
+                'conversations'
+              )
+              .doc(conversationId);
+
+          const batch =
+            db.batch();
+
+          for (
+            let index = 0;
+            index <
+            selectedPhotos.length;
+            index += 1
+          ) {
+            const photo =
+              selectedPhotos[index];
+
+            const photoMessageId =
+              db
+                .collection(
+                  'messages'
+                )
+                .doc().id;
+
+            const uploadResult =
+              await uploadToCloudinary(
+                photo.file
+              );
+
+            const messageRef =
+              db
+                .collection('messages')
+                .doc(
+                  photoMessageId
+                );
+
+            batch.set(
+              messageRef,
+              {
+                conversationId,
+
+                type: 'image',
+
+                fileUrl:
+                  uploadResult.url,
+
+                fileName:
+                  photo.file.name,
+
+                fileSize:
+                  photo.file.size,
+
+                mimeType:
+                  photo.file.type,
+
+                mediaPublicId:
+                  uploadResult.publicId,
+
+                text:
+                  index === 0
+                    ? text
+                    : '',
+
+                uid:
+                  currentUser.uid,
+
+                senderId:
+                  currentUser.uid,
+
+                receiverId:
+                  otherUser.uid,
+
+                userName:
+                  currentUser.displayName ||
+                  'CyberTalk Kullanıcısı',
+
+                photoURL:
+                  currentUser.photoURL ||
+                  '',
+
+                createdAt:
+                  firebase.firestore.FieldValue.serverTimestamp(),
+              }
+            );
+          }
+
+          batch.set(
+            conversationRef,
+            {
+              conversationId,
+
+              participants: [
+                currentUser.uid,
+                otherUser.uid,
+              ],
+
+              lastMessage:
+                text
+                  ? `📷 ${text}`
+                  : '📷 Fotoğraf',
+
+              lastSenderId:
+                currentUser.uid,
+
+              lastMessageAt:
+                firebase.firestore.FieldValue.serverTimestamp(),
+
+              updatedAt:
+                firebase.firestore.FieldValue.serverTimestamp(),
+
+              deletedFor:
+                firebase.firestore.FieldValue.arrayRemove(
+                  currentUser.uid
+                ),
+
+              archivedBy:
+                firebase.firestore.FieldValue.arrayRemove(
+                  currentUser.uid
+                ),
+            },
+            {
+              merge: true,
+            }
+          );
+
+          await batch.commit();
+
+          /*
+           * Upload + Firestore tamamlandı.
+           * Artık composer'daki geçici
+           * fotoğrafları temizleyebiliriz.
+           */
+          selectedPhotos.forEach(
+            (photo) => {
+              URL.revokeObjectURL(
+                photo.previewUrl
+              );
+            }
+          );
+
+          setSelectedPhotos([]);
+          setPreviewPhoto(null);
+          setDraft('');
+          setReplyTo(null);
+          setShowEmojiPicker(false);
+          setShowGifPicker(false);
+
+          return;
+        } catch (error) {
+          console.error(
+            'Fotoğraf gönderilemedi:',
+            error
+          );
+
+          alert(
+            `Fotoğraf gönderilemedi.\n${error.code || ''
+            }\n${error.message ||
+            error
+            }`
+          );
+
+          /*
+           * Fotoğrafları ve yazıyı
+           * composer'da bırak.
+           */
+          return;
+        }
+      }
+
+      /*
+       * NORMAL METİN MESAJI
+       */
+      const optimisticMessage = {
+        id:
+          messageId,
+
+        conversationId,
+
+        text,
+
+        type: 'text',
+
+        uid:
+          currentUser.uid,
+
+        senderId:
+          currentUser.uid,
+
+        receiverId:
+          otherUser.uid,
+
+        pending:
+          true,
+
+        localCreatedAt:
+          Date.now(),
+
+        replyTo:
+          replyTo
+            ? {
+              messageId:
+                replyTo.id,
+
+              senderId:
+                replyTo.senderId ||
+                replyTo.uid,
+
+              senderName:
+                replyTo.userName ||
+                otherUser.displayName ||
+                'Kullanıcı',
+
+              text:
+                getMessageText(
+                  replyTo
+                ),
+            }
+            : null,
+      };
+
       setMessages(
         (current) => [
           ...current,
-          {
-            id: messageId,
-            conversationId,
-            text,
-            type: 'text',
-
-            uid:
-              currentUser.uid,
-
-            senderId:
-              currentUser.uid,
-
-            receiverId:
-              otherUser.uid,
-
-            pending: true,
-
-            localCreatedAt:
-              Date.now(),
-
-            replyTo:
-              replyTo
-                ? {
-                  messageId:
-                    replyTo.id,
-
-                  senderId:
-                    replyTo.senderId ||
-                    replyTo.uid,
-
-                  senderName:
-                    replyTo.userName ||
-                    otherUser.displayName ||
-                    'Kullanıcı',
-
-                  text:
-                    getMessageText(
-                      replyTo
-                    ),
-                }
-                : null,
-          },
+          optimisticMessage,
         ]
       );
 
@@ -524,10 +737,13 @@ export default function Conversation({
       setReplyTo(null);
       setShowEmojiPicker(false);
       setShowGifPicker(false);
+
       try {
         const conversationRef =
           db
-            .collection('conversations')
+            .collection(
+              'conversations'
+            )
             .doc(conversationId);
 
         const messageRef =
@@ -602,26 +818,7 @@ export default function Conversation({
               '',
 
             replyTo:
-              replyTo
-                ? {
-                  messageId:
-                    replyTo.id,
-
-                  senderId:
-                    replyTo.senderId ||
-                    replyTo.uid,
-
-                  senderName:
-                    replyTo.userName ||
-                    otherUser.displayName ||
-                    'Kullanıcı',
-
-                  text:
-                    getMessageText(
-                      replyTo
-                    ),
-                }
-                : null,
+              optimisticMessage.replyTo,
 
             createdAt:
               firebase.firestore.FieldValue.serverTimestamp(),
@@ -634,7 +831,8 @@ export default function Conversation({
           (current) =>
             current.map(
               (message) =>
-                message.id === messageId
+                message.id ===
+                  messageId
                   ? {
                     ...message,
                     pending:
@@ -659,9 +857,15 @@ export default function Conversation({
         );
 
         setDraft(text);
+
+        alert(
+          `Mesaj gönderilemedi.\n${error.code || ''
+          }\n${error.message ||
+          error
+          }`
+        );
       }
     };
-
   /*
    * Emoji seç
    */
@@ -676,7 +880,6 @@ export default function Conversation({
         false
       );
     };
-
   /*
    * GIF gönder
    */
@@ -1755,7 +1958,92 @@ export default function Conversation({
           sendMessage
         }
       >
+        {selectedPhotos.length > 0 && (
+          <div className="photo-composer-strip">
+            {selectedPhotos.map(
+              (photo) => (
+                <div
+                  key={photo.id}
+                  className="photo-composer-item"
+                >
+                  <button
+                    type="button"
+                    className="photo-composer-thumb"
+                    onClick={() =>
+                      setPreviewPhoto(
+                        photo
+                      )
+                    }
+                  >
+                    <img
+                      src={
+                        photo.previewUrl
+                      }
+                      alt="Seçilen fotoğraf"
+                    />
+                  </button>
 
+                  <button
+                    type="button"
+                    className="photo-composer-remove"
+                    onClick={() => {
+                      URL.revokeObjectURL(
+                        photo.previewUrl
+                      );
+
+                      setSelectedPhotos(
+                        (current) =>
+                          current.filter(
+                            (item) =>
+                              item.id !==
+                              photo.id
+                          )
+                      );
+
+                      if (
+                        previewPhoto?.id ===
+                        photo.id
+                      ) {
+                        setPreviewPhoto(
+                          null
+                        );
+                      }
+                    }}
+                  >
+                    ×
+                  </button>
+                </div>
+              )
+            )}
+          </div>
+        )}
+        {previewPhoto && (
+          <div
+            className="photo-preview-modal"
+            onClick={() =>
+              setPreviewPhoto(null)
+            }
+          >
+            <button
+              type="button"
+              className="photo-preview-close"
+              onClick={(event) => {
+                event.stopPropagation();
+                setPreviewPhoto(null);
+              }}
+            >
+              ×
+            </button>
+
+            <img
+              src={previewPhoto.previewUrl}
+              alt="Fotoğraf önizleme"
+              onClick={(event) =>
+                event.stopPropagation()
+              }
+            />
+          </div>
+        )}
         {replyTo && (
           <div className="reply-composer">
 
@@ -1826,6 +2114,66 @@ export default function Conversation({
         >
 
           <div className="composer-actions">
+            <input
+              ref={photoInputRef}
+              type="file"
+              accept="image/jpeg,image/png,image/webp,image/gif"
+              style={{ display: 'none' }}
+              onChange={(event) => {
+                const file =
+                  event.target.files?.[0];
+
+                if (!file) {
+                  return;
+                }
+
+                const allowedTypes = [
+                  'image/jpeg',
+                  'image/png',
+                  'image/webp',
+                  'image/gif',
+                ];
+
+                if (
+                  !allowedTypes.includes(
+                    file.type
+                  )
+                ) {
+                  alert(
+                    'Sadece JPG, PNG, WEBP veya GIF seçebilirsin.'
+                  );
+
+                  event.target.value = '';
+                  return;
+                }
+
+                if (
+                  file.size >
+                  10 * 1024 * 1024
+                ) {
+                  alert(
+                    'Fotoğraf en fazla 10 MB olabilir.'
+                  );
+
+                  event.target.value = '';
+                  return;
+                }
+
+                const previewUrl = URL.createObjectURL(file);
+                const photo = {
+                  id: Date.now(),
+                  file,
+                  previewUrl,
+                };
+
+                setSelectedPhotos((current) => [
+                  ...current,
+                  photo,
+                ]);
+
+                event.target.value = '';
+              }}
+            />
 
             <button
               type="button"
@@ -1845,6 +2193,7 @@ export default function Conversation({
             </button>
 
             {showComposerTools && (
+
               <ComposerTools
                 onEmoji={() => {
                   setShowEmojiPicker(true);
@@ -1854,10 +2203,14 @@ export default function Conversation({
                   setShowGifPicker(true);
                   setShowEmojiPicker(false);
                 }}
+                onPhoto={() => {
+                  photoInputRef.current?.click();
+                }}
                 onClose={() => {
                   setShowComposerTools(false);
                 }}
               />
+
             )}
 
           </div>
@@ -1884,7 +2237,8 @@ export default function Conversation({
             type="submit"
             className="send-btn"
             disabled={
-              !draft.trim()
+              !draft.trim() &&
+              selectedPhotos.length === 0
             }
             style={{
               flex: '0 0 auto',
