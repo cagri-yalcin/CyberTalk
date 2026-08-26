@@ -236,11 +236,39 @@ export default function MessageBubble({
                     () => setImageViewerOpen(true)
                 )}
 
-                <span className="message-time">
-                    {message.pending
-                        ? 'Gönderiliyor...'
-                        : message.formattedTime}
-                </span>
+                <div
+                    className="message-meta-row"
+                    style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'flex-end',
+                        gap: '6px',
+                        marginTop: '4px',
+                    }}
+                >
+                    {message.editedAt && (
+                        <span
+                            className="message-edited-label"
+                            title="Bu mesaj düzenlendi"
+                            style={{
+                                fontSize: '10px',
+                                opacity: 0.72,
+                                lineHeight: 1,
+                                letterSpacing: '0.1px',
+                                fontStyle: 'italic',
+                                whiteSpace: 'nowrap',
+                            }}
+                        >
+                            • düzenlendi
+                        </span>
+                    )}
+
+                    <span className="message-time">
+                        {message.pending
+                            ? 'Gönderiliyor...'
+                            : message.formattedTime}
+                    </span>
+                </div>
             </div>
 
             {renderReactions(

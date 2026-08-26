@@ -15,6 +15,7 @@ export default function MessageActions({
     onReply,
     onForward,
     onCopy,
+    onEdit,
     onDeleteForMe,
     onDeleteForEveryone,
     onReaction,
@@ -68,6 +69,22 @@ export default function MessageActions({
             >
                 ⧉ Kopyala
             </button>
+
+            {mine && ['text', 'image', 'file'].includes(message.type) && (
+                <button
+                    type="button"
+                    className="edit-menu-item"
+                    onMouseDown={(event) => event.stopPropagation()}
+                    onClick={(event) => {
+                        event.stopPropagation();
+                        onEdit(message);
+                    }}
+                >
+                    {message.type === 'text'
+                        ? '✎ Düzenle'
+                        : '✎ Açıklamayı düzenle'}
+                </button>
+            )}
 
             <button
                 type="button"

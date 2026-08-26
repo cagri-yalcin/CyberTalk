@@ -164,6 +164,29 @@ service cloud.firestore {
           ||
 
           (
+            resource.data.senderId ==
+              request.auth.uid
+
+            && request.resource.data
+              .diff(resource.data)
+              .affectedKeys()
+              .hasOnly([
+                'text',
+                'editedAt'
+              ])
+
+            && request.resource.data.text is string
+            && request.resource.data.editedAt is timestamp
+             && (
+               resource.data.type == 'text'
+               || resource.data.type == 'image'
+               || resource.data.type == 'file'
+             )
+          )
+
+          ||
+
+          (
             conversationParticipant(
               resource.data.conversationId
             )

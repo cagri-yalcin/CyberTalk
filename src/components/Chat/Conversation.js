@@ -157,6 +157,16 @@ export default function Conversation({
   ] = useState(null);
 
   const [
+    editingMessage,
+    setEditingMessage,
+  ] = useState(null);
+
+  const [
+    editSaving,
+    setEditSaving,
+  ] = useState(false);
+
+  const [
     forwardMessage,
     setForwardMessage,
   ] = useState(null);
@@ -1479,6 +1489,107 @@ const startReply =
   };
 
 /*
+ * Mesajı düzenleme moduna al.
+ */
+const startEdit =
+  (message) => {
+    const editableTypes = [
+      'text',
+      'image',
+      'file',
+    ];
+
+    if (
+      !editableTypes.includes(message.type) ||
+      (message.senderId || message.uid) !==
+        currentUser.uid
+    ) {
+      return;
+    }
+
+    setEditingMessage({ ...message });
+    setDraft(message.text || '');
+    setReplyTo(null);
+    setMessageMenu(null);
+    setShowEmojiPicker(false);
+    setShowGifPicker(false);
+    setShowComposerTools(false);
+    setSelectedPhotos([]);
+    setSelectedFile(null);
+  };
+
+/*
+ * Düzenlenen mesajı Firestore'a kaydet.
+ */
+const saveEditedMessage =
+  async () => {
+    if (
+      !editingMessage ||
+      editSaving
+    ) {
+      return;
+    }
+
+    const text =
+      draft.trim();
+
+    const originalText =
+      (editingMessage.text || '').trim();
+
+    // Değişiklik yoksa Firestore'a gereksiz update gönderme.
+    if (text === originalText) {
+      setEditingMessage(null);
+      setDraft('');
+      return;
+    }
+
+    setEditSaving(true);
+
+    try {
+      await db
+        .collection('messages')
+        .doc(editingMessage.id)
+        .update({
+          text,
+          editedAt:
+            firebase.firestore.FieldValue.serverTimestamp(),
+        });
+
+      setMessages(
+        (current) =>
+          current.map(
+            (message) =>
+              message.id ===
+                editingMessage.id
+                ? {
+                    ...message,
+                    text,
+                    editedAt:
+                      new Date(),
+                  }
+                : message
+          )
+      );
+
+      setEditingMessage(null);
+      setDraft('');
+      setShowEmojiPicker(false);
+      setShowGifPicker(false);
+    } catch (error) {
+      console.error(
+        'Mesaj düzenlenemedi:',
+        error
+      );
+
+      alert(
+        `Mesaj düzenlenemedi.\n${error.code || ''}\n${error.message || error}`
+      );
+    } finally {
+      setEditSaving(false);
+    }
+  };
+
+/*
  * Forward penceresini aç.
  */
 const openForward =
@@ -1820,6 +1931,11 @@ const openMessageMenu =
     async (event) => {
       event.preventDefault();
 
+      if (editingMessage) {
+        await saveEditedMessage();
+        return;
+      }
+
       if (sendingRef.current) {
         return;
       }
@@ -2079,6 +2195,10 @@ return (
                         copyMessage
                       }
 
+                      onEdit={
+                        startEdit
+                      }
+
                       onReaction={
                         handleReaction
                       }
@@ -2110,7 +2230,105 @@ return (
       onSubmit={
         sendMessage
       }
-    >{selectedFile && (
+    >
+      {editingMessage && (
+        <div
+          className="edit-composer-strip"
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '12px',
+            margin: '0 12px 10px',
+            padding: '10px 12px',
+            borderRadius: '14px',
+            background: 'rgba(59, 130, 246, 0.12)',
+            border: '1px solid rgba(96, 165, 250, 0.28)',
+            boxShadow: '0 8px 24px rgba(0,0,0,0.12)',
+          }}
+        >
+          <div
+            style={{
+              width: '34px',
+              height: '34px',
+              flex: '0 0 34px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              borderRadius: '10px',
+              background: 'rgba(59,130,246,0.18)',
+              fontSize: '17px',
+            }}
+          >
+            {editingMessage.type === 'image'
+              ? '📷'
+              : editingMessage.type === 'file'
+                ? '📎'
+                : '✎'}
+          </div>
+
+          <div
+            style={{
+              minWidth: 0,
+              flex: 1,
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '2px',
+            }}
+          >
+            <strong
+              style={{
+                fontSize: '12px',
+                color: '#60a5fa',
+                letterSpacing: '0.2px',
+              }}
+            >
+              {editingMessage.type === 'text'
+                ? 'Mesajı düzenliyorsun'
+                : 'Açıklamayı düzenliyorsun'}
+            </strong>
+            <span
+              style={{
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap',
+                fontSize: '13px',
+                opacity: 0.78,
+              }}
+            >
+              {editingMessage.type === 'file'
+                ? editingMessage.fileName || 'Belge'
+                : editingMessage.type === 'image'
+                  ? (editingMessage.text || 'Fotoğraf açıklaması yok')
+                  : (editingMessage.text || 'Mesaj')}
+            </span>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => {
+              setEditingMessage(null);
+              setDraft('');
+              setEditSaving(false);
+            }}
+            aria-label="Düzenlemeyi iptal et"
+            style={{
+              width: '30px',
+              height: '30px',
+              border: 0,
+              borderRadius: '50%',
+              background: 'rgba(255,255,255,0.08)',
+              color: 'inherit',
+              cursor: 'pointer',
+              fontSize: '18px',
+              lineHeight: 1,
+            }}
+          >
+            ×
+          </button>
+        </div>
+      )}
+
+      {!editingMessage && selectedFile && (
       <div className="file-composer-strip">
         <div className="file-composer-item">
           <span className="file-composer-icon">
@@ -2143,7 +2361,7 @@ return (
         </div>
       </div>
     )}
-      {selectedPhotos.length > 0 && (
+      {!editingMessage && selectedPhotos.length > 0 && (
         <div className="photo-composer-strip">
           {selectedPhotos.map(
             (photo) => (
@@ -2394,6 +2612,7 @@ return (
             }}
           />
 
+          {!editingMessage && (
           <button
             type="button"
             className="composer-plus-btn"
@@ -2410,8 +2629,9 @@ return (
           >
             +
           </button>
+          )}
 
-          {showComposerTools && (
+          {!editingMessage && showComposerTools && (
 
             <ComposerTools
               onEmoji={() => {
@@ -2445,9 +2665,13 @@ return (
             )
           }
           placeholder={
-            replyTo
-              ? 'Cevabını yaz...'
-              : 'Mesaj yaz...'
+            editingMessage
+              ? editingMessage.type === 'text'
+                ? 'Mesajı düzenle...'
+                : 'Açıklama ekle veya düzenle...'
+              : replyTo
+                ? 'Cevabını yaz...'
+                : 'Mesaj yaz...'
           }
           style={{
             flex: '1 1 auto',
@@ -2459,15 +2683,17 @@ return (
           type="submit"
           className="send-btn"
           disabled={
-            !draft.trim() &&
-            selectedPhotos.length === 0 &&
-            !selectedFile
+            editSaving ||
+            (!editingMessage &&
+              !draft.trim() &&
+              selectedPhotos.length === 0 &&
+              !selectedFile)
           }
           style={{
             flex: '0 0 auto',
           }}
         >
-          ➤
+          {editingMessage ? '✓' : '➤'}
         </button>
 
       </div>
