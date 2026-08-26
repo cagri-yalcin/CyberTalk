@@ -1,4 +1,5 @@
-import React from 'react';
+import React, { useState } from 'react';
+import { createPortal } from 'react-dom';
 
 function renderReplyPreview(message) {
     if (!message.replyTo) {
@@ -20,7 +21,10 @@ function renderReplyPreview(message) {
     );
 }
 
-function renderContent(message) {
+function renderContent(
+    message,
+    onImageClick
+) {
     switch (message.type) {
         case 'gif':
             return (
@@ -33,38 +37,70 @@ function renderContent(message) {
 
         case 'image':
             return (
-                <img
-                    src={message.fileUrl}
-                    alt={
-                        message.fileName ||
-                        'Fotoğraf'
-                    }
-                    className="message-image"
-                />
+                <div className="message-image-content">
+                    <img
+                        src={message.fileUrl}
+                        alt={
+                            message.fileName ||
+                            'Fotoğraf'
+                        }
+                        className="message-image"
+                        onClick={(event) => {
+                            event.stopPropagation();
+                            onImageClick?.();
+                        }}
+                        style={{
+                            cursor: 'zoom-in',
+                        }}
+                    />
+
+                    {message.text && (
+                        <p className="message-media-caption">
+                            {message.text}
+                        </p>
+                    )}
+                </div>
             );
 
         case 'file':
             return (
-                <div className="message-file">
-                    <div className="message-file-icon">
-                        📎
-                    </div>
+                <div>
+                    <a
+                        href={message.fileUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="message-file message-file-link"
+                        download={message.fileName || undefined}
+                        onClick={(event) =>
+                            event.stopPropagation()
+                        }
+                    >
+                        <div className="message-file-icon">
+                            📎
+                        </div>
 
-                    <div className="message-file-info">
-                        <strong>
-                            {message.fileName ||
-                                'Dosya'}
-                        </strong>
+                        <div className="message-file-info">
+                            <strong>
+                                {message.fileName ||
+                                    'Dosya'}
+                            </strong>
 
-                        {message.fileSize && (
-                            <span>
-                                {Math.round(
-                                    message.fileSize / 1024
-                                )}{' '}
-                                KB
-                            </span>
-                        )}
-                    </div>
+                            {message.fileSize && (
+                                <span>
+                                    {Math.round(
+                                        message.fileSize / 1024
+                                    )}{' '}
+                                    KB
+                                </span>
+                            )}
+                        </div>
+                    </a>
+
+                    {message.text && (
+                        <p className="message-media-caption">
+                            {message.text}
+                        </p>
+                    )}
                 </div>
             );
 
@@ -157,8 +193,14 @@ export default function MessageBubble({
     onOpenMenu,
     currentUser,
 }) {
+    const [
+        imageViewerOpen,
+        setImageViewerOpen,
+    ] = useState(false);
+
     return (
-        <div
+        <>
+            <div
             className={`bubble-row ${mine
                     ? 'mine'
                     : 'theirs'
@@ -190,7 +232,8 @@ export default function MessageBubble({
                 )}
 
                 {renderContent(
-                    message
+                    message,
+                    () => setImageViewerOpen(true)
                 )}
 
                 <span className="message-time">
@@ -205,5 +248,76 @@ export default function MessageBubble({
                 currentUser
             )}
         </div>
+
+            {imageViewerOpen &&
+                message.type === 'image' &&
+                typeof document !== 'undefined' &&
+                createPortal(
+                    <div
+                        role="dialog"
+                        aria-modal="true"
+                        aria-label="Fotoğraf görüntüleyici"
+                        onClick={() =>
+                            setImageViewerOpen(false)
+                        }
+                        style={{
+                            position: 'fixed',
+                            inset: 0,
+                            zIndex: 10000,
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            padding: '32px',
+                            background: 'rgba(0, 0, 0, 0.86)',
+                        }}
+                    >
+                        <button
+                            type="button"
+                            aria-label="Kapat"
+                            onClick={(event) => {
+                                event.stopPropagation();
+                                setImageViewerOpen(false);
+                            }}
+                            style={{
+                                position: 'fixed',
+                                top: '20px',
+                                right: '24px',
+                                zIndex: 10001,
+                                border: 'none',
+                                background: 'rgba(255,255,255,0.12)',
+                                color: '#fff',
+                                fontSize: '32px',
+                                lineHeight: 1,
+                                width: '44px',
+                                height: '44px',
+                                borderRadius: '50%',
+                                cursor: 'pointer',
+                            }}
+                        >
+                            ×
+                        </button>
+
+                        <img
+                            src={message.fileUrl}
+                            alt={
+                                message.fileName ||
+                                'Fotoğraf'
+                            }
+                            onClick={(event) =>
+                                event.stopPropagation()
+                            }
+                            style={{
+                                maxWidth: '92vw',
+                                maxHeight: '90vh',
+                                objectFit: 'contain',
+                                borderRadius: '8px',
+                                boxShadow:
+                                    '0 20px 60px rgba(0,0,0,0.5)',
+                            }}
+                        />
+                    </div>,
+                    document.body
+                )}
+        </>
     );
 }

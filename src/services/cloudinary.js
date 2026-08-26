@@ -5,7 +5,7 @@ const UPLOAD_PRESET =
     'cybertalk_media';
 
 const UPLOAD_URL =
-    `https://api.cloudinary.com/v1_1/${CLOUD_NAME}/upload`;
+    `https://api.cloudinary.com/v1_1/${CLOUD_NAME}/auto/upload`;
 
 export async function uploadToCloudinary(
     file

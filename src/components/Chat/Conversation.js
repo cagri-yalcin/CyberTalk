@@ -139,6 +139,13 @@ export default function Conversation({
 
   const photoInputRef = useRef(null);
 
+  const fileInputRef = useRef(null);
+
+  const [
+    selectedFile,
+    setSelectedFile,
+  ] = useState(null);
+
   const [
     deletionsLoaded,
     setDeletionsLoaded,
@@ -177,6 +184,11 @@ export default function Conversation({
 
   const messageMenuRef =
     useRef(null);
+
+  // Duplicate submit kilidi: aynı kullanıcı eylemi iki kez tetiklense bile
+  // yalnızca bir upload/batch işlemi çalışır.
+  const sendingRef =
+    useRef(false);
 
   const conversationId =
     getConversationId(
@@ -472,18 +484,159 @@ export default function Conversation({
   /*
 * Metin + fotoğraf(lar) gönder
 */
-  const sendMessage =
-    async (event) => {
-      event.preventDefault();
-
+  /*
+   * Metin + fotoğraf(lar) + belge gönder
+   */
+  const sendMessageInternal =
+    async () => {
       const text =
         draft.trim();
 
       const hasPhotos =
         selectedPhotos.length > 0;
 
-      if (!text && !hasPhotos) {
+      const hasFile =
+        !!selectedFile;
+
+      if (
+        !text &&
+        !hasPhotos &&
+        !hasFile
+      ) {
         return;
+      }
+
+      /*
+       * BELGE GÖNDERİMİ
+       */
+      if (hasFile) {
+        try {
+          const conversationRef =
+            db
+              .collection(
+                'conversations'
+              )
+              .doc(conversationId);
+
+          const messageRef =
+            db
+              .collection('messages')
+              .doc();
+
+          const uploadResult =
+            await uploadToCloudinary(
+              selectedFile.file,
+              'raw'
+            );
+
+          const batch =
+            db.batch();
+
+          batch.set(
+            messageRef,
+            {
+              conversationId,
+
+              type: 'file',
+
+              fileUrl:
+                uploadResult.url,
+
+              fileName:
+                selectedFile.file.name,
+
+              fileSize:
+                selectedFile.file.size,
+
+              mimeType:
+                selectedFile.file.type ||
+                'application/octet-stream',
+
+              mediaPublicId:
+                uploadResult.publicId,
+
+              text,
+
+              uid:
+                currentUser.uid,
+
+              senderId:
+                currentUser.uid,
+
+              receiverId:
+                otherUser.uid,
+
+              userName:
+                currentUser.displayName ||
+                'CyberTalk Kullanıcısı',
+
+              photoURL:
+                currentUser.photoURL ||
+                '',
+
+              createdAt:
+                firebase.firestore.FieldValue.serverTimestamp(),
+            }
+          );
+
+          batch.set(
+            conversationRef,
+            {
+              conversationId,
+
+              participants: [
+                currentUser.uid,
+                otherUser.uid,
+              ],
+
+              lastMessage:
+                `📎 ${selectedFile.file.name}`,
+
+              lastSenderId:
+                currentUser.uid,
+
+              lastMessageAt:
+                firebase.firestore.FieldValue.serverTimestamp(),
+
+              updatedAt:
+                firebase.firestore.FieldValue.serverTimestamp(),
+
+              deletedFor:
+                firebase.firestore.FieldValue.arrayRemove(
+                  currentUser.uid
+                ),
+
+              archivedBy:
+                firebase.firestore.FieldValue.arrayRemove(
+                  currentUser.uid
+                ),
+            },
+            {
+              merge: true,
+            }
+          );
+
+          await batch.commit();
+
+          setSelectedFile(null);
+          setDraft('');
+          setReplyTo(null);
+          setShowEmojiPicker(false);
+          setShowGifPicker(false);
+
+          return;
+        } catch (error) {
+          console.error(
+            'Belge gönderilemedi:',
+            error
+          );
+
+          alert(
+            `Belge gönderilemedi.\n${error.code || ''}\n${error.message || error}`
+          );
+
+          return;
+        }
       }
 
       const messageId =
@@ -493,14 +646,6 @@ export default function Conversation({
 
       /*
        * FOTOĞRAF GÖNDERİMİ
-       *
-       * Fotoğrafları önce Cloudinary'ye
-       * yükle. Firestore'a ancak upload
-       * başarılı olduktan sonra yaz.
-       *
-       * Böylece optimistic/pending
-       * fotoğraf mesajı snapshot tarafından
-       * silinemez.
        */
       if (hasPhotos) {
         try {
@@ -538,9 +683,7 @@ export default function Conversation({
             const messageRef =
               db
                 .collection('messages')
-                .doc(
-                  photoMessageId
-                );
+                .doc(photoMessageId);
 
             batch.set(
               messageRef,
@@ -633,11 +776,6 @@ export default function Conversation({
 
           await batch.commit();
 
-          /*
-           * Upload + Firestore tamamlandı.
-           * Artık composer'daki geçici
-           * fotoğrafları temizleyebiliriz.
-           */
           selectedPhotos.forEach(
             (photo) => {
               URL.revokeObjectURL(
@@ -660,17 +798,12 @@ export default function Conversation({
             error
           );
 
+          setDraft(text);
+
           alert(
-            `Fotoğraf gönderilemedi.\n${error.code || ''
-            }\n${error.message ||
-            error
-            }`
+            `Fotoğraf gönderilemedi.\n${error.code || ''}\n${error.message || error}`
           );
 
-          /*
-           * Fotoğrafları ve yazıyı
-           * composer'da bırak.
-           */
           return;
         }
       }
@@ -859,651 +992,75 @@ export default function Conversation({
         setDraft(text);
 
         alert(
-          `Mesaj gönderilemedi.\n${error.code || ''
-          }\n${error.message ||
-          error
-          }`
+          `Mesaj gönderilemedi.\n${error.code || ''}\n${error.message || error}`
         );
       }
     };
-  /*
-   * Emoji seç
-   */
-  const handleEmojiSelect =
-    (emoji) => {
-      setDraft(
-        (current) =>
-          `${current}${emoji}`
-      );
+/*
+ * Emoji seç
+ */
+const handleEmojiSelect =
+  (emoji) => {
+    setDraft(
+      (current) =>
+        `${current}${emoji}`
+    );
 
-      setShowEmojiPicker(
-        false
-      );
-    };
-  /*
-   * GIF gönder
-   */
-  const sendGif =
-    async (gif) => {
-      setShowGifPicker(
-        false
-      );
+    setShowEmojiPicker(
+      false
+    );
+  };
+/*
+ * GIF gönder
+ */
 
-      const messageId =
-        db
-          .collection(
-            'messages'
-          )
-          .doc().id;
+const sendGif =
+  async (gif) => {
+    setShowGifPicker(
+      false
+    );
 
-      setMessages(
-        (current) => [
-          ...current,
+    const messageId =
+      db
+        .collection(
+          'messages'
+        )
+        .doc().id;
+
+    setMessages(
+      (current) => [
+        ...current,
+        {
+          id: messageId,
+          conversationId,
+          type: 'gif',
+          gifUrl: gif.url,
+          text: '',
+          uid:
+            currentUser.uid,
+          senderId:
+            currentUser.uid,
+          receiverId:
+            otherUser.uid,
+          pending: true,
+          localCreatedAt:
+            Date.now(),
+        },
+      ]
+    );
+
+    try {
+      await ensureConversation();
+
+      await db
+        .collection(
+          'conversations'
+        )
+        .doc(conversationId)
+        .set(
           {
-            id: messageId,
-            conversationId,
-            type: 'gif',
-            gifUrl: gif.url,
-            text: '',
-            uid:
-              currentUser.uid,
-            senderId:
-              currentUser.uid,
-            receiverId:
-              otherUser.uid,
-            pending: true,
-            localCreatedAt:
-              Date.now(),
-          },
-        ]
-      );
-
-      try {
-        await ensureConversation();
-
-        await db
-          .collection(
-            'conversations'
-          )
-          .doc(conversationId)
-          .set(
-            {
-              lastMessage:
-                'GIF',
-
-              lastSenderId:
-                currentUser.uid,
-
-              lastMessageAt:
-                firebase.firestore.FieldValue.serverTimestamp(),
-
-              updatedAt:
-                firebase.firestore.FieldValue.serverTimestamp(),
-
-              deletedFor:
-                firebase.firestore.FieldValue.arrayRemove(
-                  currentUser.uid
-                ),
-
-              archivedBy:
-                firebase.firestore.FieldValue.arrayRemove(
-                  currentUser.uid
-                ),
-            },
-            {
-              merge: true,
-            }
-          );
-
-        await db
-          .collection(
-            'messages'
-          )
-          .doc(messageId)
-          .set({
-            conversationId,
-
-            type: 'gif',
-
-            gifUrl:
-              gif.url,
-
-            gifTitle:
-              gif.title ||
-              'GIF',
-
-            text: '',
-
-            uid:
-              currentUser.uid,
-
-            senderId:
-              currentUser.uid,
-
-            receiverId:
-              otherUser.uid,
-
-            userName:
-              currentUser.displayName ||
-              'CyberTalk Kullanıcısı',
-
-            photoURL:
-              currentUser.photoURL ||
-              '',
-
-            createdAt:
-              firebase.firestore.FieldValue.serverTimestamp(),
-          });
-
-        setMessages(
-          (current) =>
-            current.map(
-              (message) =>
-                message.id ===
-                  messageId
-                  ? {
-                    ...message,
-                    pending:
-                      false,
-                  }
-                  : message
-            )
-        );
-      } catch (error) {
-        console.error(
-          'GIF gönderilemedi:',
-          error
-        );
-
-        setMessages(
-          (current) =>
-            current.filter(
-              (message) =>
-                message.id !==
-                messageId
-            )
-        );
-      }
-    };
-
-  /*
-   * Sabitle / sessize al / arşiv
-   */
-  const toggleFlag =
-    async (
-      field,
-      enabled
-    ) => {
-      try {
-        await ensureConversation();
-
-        await db
-          .collection(
-            'conversations'
-          )
-          .doc(conversationId)
-          .set(
-            {
-              [field]:
-                enabled
-                  ? firebase.firestore.FieldValue.arrayUnion(
-                    currentUser.uid
-                  )
-                  : firebase.firestore.FieldValue.arrayRemove(
-                    currentUser.uid
-                  ),
-
-              updatedAt:
-                firebase.firestore.FieldValue.serverTimestamp(),
-            },
-            {
-              merge: true,
-            }
-          );
-
-        setShowMenu(false);
-
-        if (
-          field ===
-          'archivedBy' &&
-          enabled
-        ) {
-          onCloseConversation?.();
-        }
-      } catch (error) {
-        console.error(
-          'Sohbet ayarı değiştirilemedi:',
-          error
-        );
-      }
-    };
-
-  /*
-   * Sohbeti sadece benden kaldır.
-   */
-  const deleteConversationForMe =
-    async () => {
-      try {
-        await ensureConversation();
-
-        await db
-          .collection(
-            'conversations'
-          )
-          .doc(conversationId)
-          .set(
-            {
-              deletedFor:
-                firebase.firestore.FieldValue.arrayUnion(
-                  currentUser.uid
-                ),
-            },
-            {
-              merge: true,
-            }
-          );
-
-        setShowMenu(false);
-
-        onCloseConversation?.();
-      } catch (error) {
-        console.error(
-          'Sohbet silinemedi:',
-          error
-        );
-      }
-    };
-
-  /*
-   * Mesajı sadece benden sil.
-   */
-  const deleteMessageForMe =
-    async (message) => {
-      try {
-        const deletionId =
-          `${message.id}_${currentUser.uid}`;
-
-        await db
-          .collection(
-            'messageDeletions'
-          )
-          .doc(deletionId)
-          .set({
-            messageId:
-              message.id,
-
-            conversationId,
-
-            uid:
-              currentUser.uid,
-
-            createdAt:
-              firebase.firestore.FieldValue.serverTimestamp(),
-          });
-
-        setMessages(
-          (current) =>
-            current.filter(
-              (item) =>
-                item.id !==
-                message.id
-            )
-        );
-
-        setMessageMenu(
-          null
-        );
-      } catch (error) {
-        console.error(
-          'Mesaj benden silinemedi:',
-          error
-        );
-      }
-    };
-
-  /*
-   * Kendi mesajını herkesten sil.
-   */
-  const deleteMessageForEveryone =
-    async (message) => {
-      const sender =
-        message.senderId ||
-        message.uid;
-
-      if (
-        sender !==
-        currentUser.uid
-      ) {
-        return;
-      }
-
-      try {
-        await db
-          .collection('messages')
-          .doc(message.id)
-          .update({
-            deletedForEveryone:
-              true,
-
-            deletedAt:
-              firebase.firestore.FieldValue.serverTimestamp(),
-          });
-
-        setMessages(
-          (current) =>
-            current.filter(
-              (item) =>
-                item.id !==
-                message.id
-            )
-        );
-
-        setMessageMenu(
-          null
-        );
-      } catch (error) {
-        console.error(
-          'Mesaj herkesten silinemedi:',
-          error
-        );
-      }
-    };
-
-  /*
-   * Reaction
-   *
-   * Şimdilik mesaj belgesi üzerinde
-   * reactions map kullanıyoruz.
-   */
-  /*
-   * Mesaj reaction
-   */
-  const handleReaction =
-    async (
-      message,
-      emoji
-    ) => {
-      if (reactionLoading) {
-        return;
-      }
-
-      setReactionLoading(true);
-
-      try {
-        const messageRef =
-          db
-            .collection('messages')
-            .doc(message.id);
-
-        const currentReactions =
-          message.reactions || {};
-
-        const currentReaction =
-          currentReactions[
-          currentUser.uid
-          ];
-
-        const nextReactions = {
-          ...currentReactions,
-        };
-
-        if (
-          currentReaction === emoji
-        ) {
-          delete nextReactions[
-            currentUser.uid
-          ];
-        } else {
-          nextReactions[
-            currentUser.uid
-          ] = emoji;
-        }
-
-        await messageRef.update({
-          reactions:
-            nextReactions,
-        });
-
-        setMessages(
-          (current) =>
-            current.map(
-              (item) =>
-                item.id === message.id
-                  ? {
-                    ...item,
-                    reactions:
-                      nextReactions,
-                  }
-                  : item
-            )
-        );
-
-        setMessageMenu(null);
-      } catch (error) {
-        console.error(
-          'Reaction kaydedilemedi:',
-          error
-        );
-
-        alert(
-          `Reaction kaydedilemedi:\n${error.code || ''
-          }\n${error.message ||
-          error
-          }`
-        );
-      } finally {
-        setReactionLoading(false);
-      }
-    };
-  /*
-   * Clipboard
-   */
-  const copyMessage =
-    async (message) => {
-      const value =
-        getMessageText(
-          message
-        );
-
-      if (!value) {
-        return;
-      }
-
-      try {
-        await navigator.clipboard.writeText(
-          value
-        );
-      } catch (error) {
-        console.error(
-          'Mesaj kopyalanamadı:',
-          error
-        );
-      }
-
-      setMessageMenu(
-        null
-      );
-    };
-
-  /*
-   * Cevapla
-   */
-  const startReply =
-    (message) => {
-      setReplyTo(
-        message
-      );
-
-      setMessageMenu(
-        null
-      );
-
-      setShowEmojiPicker(
-        false
-      );
-
-      setShowGifPicker(
-        false
-      );
-    };
-
-  /*
-   * Forward penceresini aç.
-   */
-  const openForward =
-    async (message) => {
-      setForwardMessage(
-        message
-      );
-
-      setMessageMenu(
-        null
-      );
-
-      setForwardLoading(
-        true
-      );
-
-      try {
-        const snapshot =
-          await db
-            .collection('conversations')
-            .where(
-              'participants',
-              'array-contains',
-              currentUser.uid
-            )
-            .get();
-
-        const contactedUserIds =
-          new Set();
-
-        snapshot.docs.forEach(
-          (doc) => {
-            const data =
-              doc.data();
-
-            const participants =
-              data.participants || [];
-
-            participants.forEach(
-              (uid) => {
-                if (
-                  uid !==
-                  currentUser.uid
-                ) {
-                  contactedUserIds.add(
-                    uid
-                  );
-                }
-              }
-            );
-          }
-        );
-
-        contactedUserIds.delete(
-          otherUser.uid
-        );
-
-        const userResults =
-          await Promise.all(
-            Array.from(
-              contactedUserIds
-            ).map(
-              async (uid) => {
-                const userSnapshot =
-                  await db
-                    .collection('users')
-                    .doc(uid)
-                    .get();
-
-                if (
-                  !userSnapshot.exists
-                ) {
-                  return null;
-                }
-
-                return {
-                  uid:
-                    userSnapshot.id,
-                  ...userSnapshot.data(),
-                };
-              }
-            )
-          );
-
-        setUsersForForward(
-          userResults.filter(
-            Boolean
-          )
-        );
-      } catch (error) {
-        console.error(
-          'Forward kullanıcıları alınamadı:',
-          error
-        );
-
-        setUsersForForward(
-          []
-        );
-      } finally {
-        setForwardLoading(
-          false
-        );
-      }
-    };
-
-  /*
-   * Mesajı başka kişiye ilet.
-   */
-  /*
-   * Mesajı başka kullanıcıya ilet
-   */
-  const forwardToUser =
-    async (targetUser) => {
-      if (!forwardMessage) {
-        return;
-      }
-
-      const targetConversationId =
-        getConversationId(
-          currentUser.uid,
-          targetUser.uid
-        );
-
-      const targetConversationRef =
-        db
-          .collection(
-            'conversations'
-          )
-          .doc(
-            targetConversationId
-          );
-
-      const targetMessageRef =
-        db
-          .collection('messages')
-          .doc();
-
-      try {
-        const batch =
-          db.batch();
-
-        batch.set(
-          targetConversationRef,
-          {
-            conversationId:
-              targetConversationId,
-
-            participants: [
-              currentUser.uid,
-              targetUser.uid,
-            ],
-
             lastMessage:
-              `↗ ${getMessageText(
-                forwardMessage
-              )}`,
+              'GIF',
 
             lastSenderId:
               currentUser.uid,
@@ -1529,821 +1086,1486 @@ export default function Conversation({
           }
         );
 
-        batch.set(
-          targetMessageRef,
+      await db
+        .collection(
+          'messages'
+        )
+        .doc(messageId)
+        .set({
+          conversationId,
+
+          type: 'gif',
+
+          gifUrl:
+            gif.url,
+
+          gifTitle:
+            gif.title ||
+            'GIF',
+
+          text: '',
+
+          uid:
+            currentUser.uid,
+
+          senderId:
+            currentUser.uid,
+
+          receiverId:
+            otherUser.uid,
+
+          userName:
+            currentUser.displayName ||
+            'CyberTalk Kullanıcısı',
+
+          photoURL:
+            currentUser.photoURL ||
+            '',
+
+          createdAt:
+            firebase.firestore.FieldValue.serverTimestamp(),
+        });
+
+      setMessages(
+        (current) =>
+          current.map(
+            (message) =>
+              message.id ===
+                messageId
+                ? {
+                  ...message,
+                  pending:
+                    false,
+                }
+                : message
+          )
+      );
+    } catch (error) {
+      console.error(
+        'GIF gönderilemedi:',
+        error
+      );
+
+      setMessages(
+        (current) =>
+          current.filter(
+            (message) =>
+              message.id !==
+              messageId
+          )
+      );
+    }
+  };
+
+/*
+ * Sabitle / sessize al / arşiv
+ */
+const toggleFlag =
+  async (
+    field,
+    enabled
+  ) => {
+    try {
+      await ensureConversation();
+
+      await db
+        .collection(
+          'conversations'
+        )
+        .doc(conversationId)
+        .set(
           {
-            conversationId:
-              targetConversationId,
+            [field]:
+              enabled
+                ? firebase.firestore.FieldValue.arrayUnion(
+                  currentUser.uid
+                )
+                : firebase.firestore.FieldValue.arrayRemove(
+                  currentUser.uid
+                ),
 
-            type:
-              'forward',
+            updatedAt:
+              firebase.firestore.FieldValue.serverTimestamp(),
+          },
+          {
+            merge: true,
+          }
+        );
 
-            text:
-              forwardMessage.text ||
-              getMessageText(
-                forwardMessage
+      setShowMenu(false);
+
+      if (
+        field ===
+        'archivedBy' &&
+        enabled
+      ) {
+        onCloseConversation?.();
+      }
+    } catch (error) {
+      console.error(
+        'Sohbet ayarı değiştirilemedi:',
+        error
+      );
+    }
+  };
+
+/*
+ * Sohbeti sadece benden kaldır.
+ */
+const deleteConversationForMe =
+  async () => {
+    try {
+      await ensureConversation();
+
+      await db
+        .collection(
+          'conversations'
+        )
+        .doc(conversationId)
+        .set(
+          {
+            deletedFor:
+              firebase.firestore.FieldValue.arrayUnion(
+                currentUser.uid
               ),
+          },
+          {
+            merge: true,
+          }
+        );
 
-            forwardedFrom: {
-              messageId:
-                forwardMessage.id,
+      setShowMenu(false);
 
-              conversationId,
+      onCloseConversation?.();
+    } catch (error) {
+      console.error(
+        'Sohbet silinemedi:',
+        error
+      );
+    }
+  };
 
-              senderId:
-                forwardMessage.senderId ||
-                forwardMessage.uid,
+/*
+ * Mesajı sadece benden sil.
+ */
+const deleteMessageForMe =
+  async (message) => {
+    try {
+      const deletionId =
+        `${message.id}_${currentUser.uid}`;
 
-              senderName:
-                forwardMessage.userName ||
-                otherUser.displayName ||
-                'Kullanıcı',
+      await db
+        .collection(
+          'messageDeletions'
+        )
+        .doc(deletionId)
+        .set({
+          messageId:
+            message.id,
 
-              originalType:
-                forwardMessage.type ||
-                'text',
+          conversationId,
 
-              originalGifUrl:
-                forwardMessage.gifUrl ||
-                '',
-            },
+          uid:
+            currentUser.uid,
 
-            uid:
-              currentUser.uid,
+          createdAt:
+            firebase.firestore.FieldValue.serverTimestamp(),
+        });
+
+      setMessages(
+        (current) =>
+          current.filter(
+            (item) =>
+              item.id !==
+              message.id
+          )
+      );
+
+      setMessageMenu(
+        null
+      );
+    } catch (error) {
+      console.error(
+        'Mesaj benden silinemedi:',
+        error
+      );
+    }
+  };
+
+/*
+ * Kendi mesajını herkesten sil.
+ */
+const deleteMessageForEveryone =
+  async (message) => {
+    const sender =
+      message.senderId ||
+      message.uid;
+
+    if (
+      sender !==
+      currentUser.uid
+    ) {
+      return;
+    }
+
+    try {
+      await db
+        .collection('messages')
+        .doc(message.id)
+        .update({
+          deletedForEveryone:
+            true,
+
+          deletedAt:
+            firebase.firestore.FieldValue.serverTimestamp(),
+        });
+
+      setMessages(
+        (current) =>
+          current.filter(
+            (item) =>
+              item.id !==
+              message.id
+          )
+      );
+
+      setMessageMenu(
+        null
+      );
+    } catch (error) {
+      console.error(
+        'Mesaj herkesten silinemedi:',
+        error
+      );
+    }
+  };
+
+/*
+ * Reaction
+ *
+ * Şimdilik mesaj belgesi üzerinde
+ * reactions map kullanıyoruz.
+ */
+/*
+ * Mesaj reaction
+ */
+const handleReaction =
+  async (
+    message,
+    emoji
+  ) => {
+    if (reactionLoading) {
+      return;
+    }
+
+    setReactionLoading(true);
+
+    try {
+      const messageRef =
+        db
+          .collection('messages')
+          .doc(message.id);
+
+      const currentReactions =
+        message.reactions || {};
+
+      const currentReaction =
+        currentReactions[
+        currentUser.uid
+        ];
+
+      const nextReactions = {
+        ...currentReactions,
+      };
+
+      if (
+        currentReaction === emoji
+      ) {
+        delete nextReactions[
+          currentUser.uid
+        ];
+      } else {
+        nextReactions[
+          currentUser.uid
+        ] = emoji;
+      }
+
+      await messageRef.update({
+        reactions:
+          nextReactions,
+      });
+
+      setMessages(
+        (current) =>
+          current.map(
+            (item) =>
+              item.id === message.id
+                ? {
+                  ...item,
+                  reactions:
+                    nextReactions,
+                }
+                : item
+          )
+      );
+
+      setMessageMenu(null);
+    } catch (error) {
+      console.error(
+        'Reaction kaydedilemedi:',
+        error
+      );
+
+      alert(
+        `Reaction kaydedilemedi:\n${error.code || ''
+        }\n${error.message ||
+        error
+        }`
+      );
+    } finally {
+      setReactionLoading(false);
+    }
+  };
+/*
+ * Clipboard
+ */
+const copyMessage =
+  async (message) => {
+    const value =
+      getMessageText(
+        message
+      );
+
+    if (!value) {
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(
+        value
+      );
+    } catch (error) {
+      console.error(
+        'Mesaj kopyalanamadı:',
+        error
+      );
+    }
+
+    setMessageMenu(
+      null
+    );
+  };
+
+/*
+ * Cevapla
+ */
+const startReply =
+  (message) => {
+    setReplyTo(
+      message
+    );
+
+    setMessageMenu(
+      null
+    );
+
+    setShowEmojiPicker(
+      false
+    );
+
+    setShowGifPicker(
+      false
+    );
+  };
+
+/*
+ * Forward penceresini aç.
+ */
+const openForward =
+  async (message) => {
+    setForwardMessage(
+      message
+    );
+
+    setMessageMenu(
+      null
+    );
+
+    setForwardLoading(
+      true
+    );
+
+    try {
+      const snapshot =
+        await db
+          .collection('conversations')
+          .where(
+            'participants',
+            'array-contains',
+            currentUser.uid
+          )
+          .get();
+
+      const contactedUserIds =
+        new Set();
+
+      snapshot.docs.forEach(
+        (doc) => {
+          const data =
+            doc.data();
+
+          const participants =
+            data.participants || [];
+
+          participants.forEach(
+            (uid) => {
+              if (
+                uid !==
+                currentUser.uid
+              ) {
+                contactedUserIds.add(
+                  uid
+                );
+              }
+            }
+          );
+        }
+      );
+
+      contactedUserIds.delete(
+        otherUser.uid
+      );
+
+      const userResults =
+        await Promise.all(
+          Array.from(
+            contactedUserIds
+          ).map(
+            async (uid) => {
+              const userSnapshot =
+                await db
+                  .collection('users')
+                  .doc(uid)
+                  .get();
+
+              if (
+                !userSnapshot.exists
+              ) {
+                return null;
+              }
+
+              return {
+                uid:
+                  userSnapshot.id,
+                ...userSnapshot.data(),
+              };
+            }
+          )
+        );
+
+      setUsersForForward(
+        userResults.filter(
+          Boolean
+        )
+      );
+    } catch (error) {
+      console.error(
+        'Forward kullanıcıları alınamadı:',
+        error
+      );
+
+      setUsersForForward(
+        []
+      );
+    } finally {
+      setForwardLoading(
+        false
+      );
+    }
+  };
+
+/*
+ * Mesajı başka kişiye ilet.
+ */
+/*
+ * Mesajı başka kullanıcıya ilet
+ */
+const forwardToUser =
+  async (targetUser) => {
+    if (!forwardMessage) {
+      return;
+    }
+
+    const targetConversationId =
+      getConversationId(
+        currentUser.uid,
+        targetUser.uid
+      );
+
+    const targetConversationRef =
+      db
+        .collection(
+          'conversations'
+        )
+        .doc(
+          targetConversationId
+        );
+
+    const targetMessageRef =
+      db
+        .collection('messages')
+        .doc();
+
+    try {
+      const batch =
+        db.batch();
+
+      batch.set(
+        targetConversationRef,
+        {
+          conversationId:
+            targetConversationId,
+
+          participants: [
+            currentUser.uid,
+            targetUser.uid,
+          ],
+
+          lastMessage:
+            `↗ ${getMessageText(
+              forwardMessage
+            )}`,
+
+          lastSenderId:
+            currentUser.uid,
+
+          lastMessageAt:
+            firebase.firestore.FieldValue.serverTimestamp(),
+
+          updatedAt:
+            firebase.firestore.FieldValue.serverTimestamp(),
+
+          deletedFor:
+            firebase.firestore.FieldValue.arrayRemove(
+              currentUser.uid
+            ),
+
+          archivedBy:
+            firebase.firestore.FieldValue.arrayRemove(
+              currentUser.uid
+            ),
+        },
+        {
+          merge: true,
+        }
+      );
+
+      batch.set(
+        targetMessageRef,
+        {
+          conversationId:
+            targetConversationId,
+
+          type:
+            'forward',
+
+          text:
+            forwardMessage.text ||
+            getMessageText(
+              forwardMessage
+            ),
+
+          forwardedFrom: {
+            messageId:
+              forwardMessage.id,
+
+            conversationId,
 
             senderId:
-              currentUser.uid,
+              forwardMessage.senderId ||
+              forwardMessage.uid,
 
-            receiverId:
-              targetUser.uid,
+            senderName:
+              forwardMessage.userName ||
+              otherUser.displayName ||
+              'Kullanıcı',
 
-            userName:
-              currentUser.displayName ||
-              'CyberTalk Kullanıcısı',
+            originalType:
+              forwardMessage.type ||
+              'text',
 
-            photoURL:
-              currentUser.photoURL ||
+            originalGifUrl:
+              forwardMessage.gifUrl ||
               '',
+          },
 
-            createdAt:
-              firebase.firestore.FieldValue.serverTimestamp(),
-          }
-        );
+          uid:
+            currentUser.uid,
 
-        await batch.commit();
+          senderId:
+            currentUser.uid,
 
-        setForwardMessage(null);
+          receiverId:
+            targetUser.uid,
 
-        setUsersForForward([]);
+          userName:
+            currentUser.displayName ||
+            'CyberTalk Kullanıcısı',
 
-      } catch (error) {
-        console.error(
-          'Mesaj iletilemedi:',
-          error
-        );
+          photoURL:
+            currentUser.photoURL ||
+            '',
 
-        alert(
-          `Mesaj iletilemedi:\n${error.code || ''
-          }\n${error.message ||
-          error
-          }`
-        );
+          createdAt:
+            firebase.firestore.FieldValue.serverTimestamp(),
+        }
+      );
+
+      await batch.commit();
+
+      setForwardMessage(null);
+
+      setUsersForForward([]);
+
+    } catch (error) {
+      console.error(
+        'Mesaj iletilemedi:',
+        error
+      );
+
+      alert(
+        `Mesaj iletilemedi:\n${error.code || ''
+        }\n${error.message ||
+        error
+        }`
+      );
+    }
+  };
+/*
+ * Mesaj menüsünü ekran içinde tut.
+ */
+const openMessageMenu =
+  (
+    event,
+    message
+  ) => {
+    event.stopPropagation();
+
+    const rect =
+      event.currentTarget.getBoundingClientRect();
+
+    const menuWidth =
+      210;
+
+    const menuHeight =
+      260;
+
+    const gap = 8;
+
+    const maxLeft =
+      window.innerWidth -
+      menuWidth -
+      12;
+
+    const desiredLeft =
+      (
+        message.senderId ||
+        message.uid
+      ) ===
+        currentUser.uid
+        ? rect.right -
+        menuWidth
+        : rect.left;
+
+    const left =
+      Math.max(
+        12,
+        Math.min(
+          desiredLeft,
+          maxLeft
+        )
+      );
+
+    const desiredTop =
+      rect.bottom +
+      gap;
+
+    const top =
+      desiredTop +
+        menuHeight >
+        window.innerHeight
+        ? Math.max(
+          12,
+          rect.top -
+          menuHeight -
+          gap
+        )
+        : desiredTop;
+
+    setMessageMenu({
+      id:
+        message.id,
+
+      top,
+
+      left,
+    });
+  };
+
+  /*
+   * Tek bir kullanıcı eyleminin iki submit event'i üretmesi halinde
+   * aynı mesajın iki kez gönderilmesini engelle.
+   */
+  const sendMessage =
+    async (event) => {
+      event.preventDefault();
+
+      if (sendingRef.current) {
+        return;
+      }
+
+      sendingRef.current = true;
+
+      try {
+        await sendMessageInternal();
+      } finally {
+        sendingRef.current = false;
       }
     };
-  /*
-   * Mesaj menüsünü ekran içinde tut.
-   */
-  const openMessageMenu =
-    (
-      event,
-      message
-    ) => {
-      event.stopPropagation();
 
-      const rect =
-        event.currentTarget.getBoundingClientRect();
+return (
 
-      const menuWidth =
-        210;
+  <div className="conversation">
 
-      const menuHeight =
-        260;
+    <header className="conversation-header">
 
-      const gap = 8;
+      <button
+        type="button"
+        className="conversation-person profile-trigger"
+        onClick={() =>
+          onViewProfile?.()
+        }
+        title="Profili görüntüle"
+      >
+        <Avatar
+          user={otherUser}
+        />
 
-      const maxLeft =
-        window.innerWidth -
-        menuWidth -
-        12;
+        <div>
+          <strong>
+            {otherUser.displayName ||
+              'CyberTalk Kullanıcısı'}
+          </strong>
 
-      const desiredLeft =
-        (
-          message.senderId ||
-          message.uid
-        ) ===
-          currentUser.uid
-          ? rect.right -
-          menuWidth
-          : rect.left;
+          <span>
+            @{otherUser.username ||
+              ''}
+          </span>
+        </div>
+      </button>
 
-      const left =
-        Math.max(
-          12,
-          Math.min(
-            desiredLeft,
-            maxLeft
-          )
-        );
+      <div className="conversation-actions">
 
-      const desiredTop =
-        rect.bottom +
-        gap;
-
-      const top =
-        desiredTop +
-          menuHeight >
-          window.innerHeight
-          ? Math.max(
-            12,
-            rect.top -
-            menuHeight -
-            gap
-          )
-          : desiredTop;
-
-      setMessageMenu({
-        id:
-          message.id,
-
-        top,
-
-        left,
-      });
-    };
-
-  return (
-    <div className="conversation">
-
-      <header className="conversation-header">
-
-        <button
-          type="button"
-          className="conversation-person profile-trigger"
-          onClick={() =>
-            onViewProfile?.()
-          }
-          title="Profili görüntüle"
+        <div
+          className="conversation-menu-wrap"
+          ref={menuRef}
         >
-          <Avatar
-            user={otherUser}
+          <button
+            type="button"
+            className="icon-btn"
+            aria-expanded={
+              showMenu
+            }
+            onClick={() =>
+              setShowMenu(
+                (value) =>
+                  !value
+              )
+            }
+          >
+            •••
+          </button>
+
+          {showMenu && (
+            <div className="conversation-menu conversation-menu-rich">
+
+              <button
+                type="button"
+                onClick={() => {
+                  setShowMenu(
+                    false
+                  );
+
+                  onViewProfile?.();
+                }}
+              >
+                Profili görüntüle
+              </button>
+
+              <button
+                type="button"
+                onClick={() =>
+                  toggleFlag(
+                    'pinnedBy',
+                    !isPinned
+                  )
+                }
+              >
+                {isPinned
+                  ? 'Sabitlemeyi kaldır'
+                  : 'Sohbeti sabitle'}
+              </button>
+
+              <button
+                type="button"
+                onClick={() =>
+                  toggleFlag(
+                    'mutedBy',
+                    !isMuted
+                  )
+                }
+              >
+                {isMuted
+                  ? 'Sessizi kaldır'
+                  : 'Sohbeti sessize al'}
+              </button>
+
+              <button
+                type="button"
+                onClick={() =>
+                  toggleFlag(
+                    'archivedBy',
+                    !isArchived
+                  )
+                }
+              >
+                {isArchived
+                  ? 'Arşivden çıkar'
+                  : 'Sohbeti arşivle'}
+              </button>
+
+              <button
+                type="button"
+                className="danger-menu-item"
+                onClick={
+                  deleteConversationForMe
+                }
+              >
+                Sohbeti benden sil
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setShowMenu(
+                    false
+                  );
+
+                  onCloseConversation?.();
+                }}
+              >
+                Sohbeti kapat
+              </button>
+
+            </div>
+          )}
+        </div>
+
+      </div>
+    </header>
+
+    <div className="messages">
+
+      {!messages.length ? (
+        <div className="conversation-empty">
+
+          <div className="big-lock">
+            🔒
+          </div>
+
+          <h2>
+            İlk mesajı gönder
+          </h2>
+
+          <p>
+            {otherUser.displayName ||
+              'Kullanıcı'} ile
+            konuşmayı başlat.
+          </p>
+
+        </div>
+      ) : (
+        messages.map(
+          (message) => {
+            const mine =
+              (
+                message.senderId ||
+                message.uid
+              ) ===
+              currentUser.uid;
+
+            const active =
+              messageMenu?.id ===
+              message.id;
+
+            const formattedTime =
+              message.pending
+                ? ''
+                : formatMessageTime(
+                  message.createdAt
+                );
+
+            return (
+              <div
+                key={
+                  message.id
+                }
+                className="message-bubble-wrap"
+              >
+
+                <MessageBubble
+                  message={{
+                    ...message,
+                    formattedTime,
+                  }}
+                  mine={mine}
+                  active={active}
+                  currentUser={
+                    currentUser
+                  }
+                  onOpenMenu={
+                    openMessageMenu
+                  }
+                />
+
+                {active && (
+                  <div
+                    ref={
+                      messageMenuRef
+                    }
+                    className="message-actions-menu"
+                    style={{
+                      position:
+                        'fixed',
+
+                      top:
+                        messageMenu.top,
+
+                      left:
+                        messageMenu.left,
+
+                      zIndex:
+                        9999,
+                    }}
+                  >
+                    <MessageActions
+                      message={
+                        message
+                      }
+
+                      mine={
+                        mine
+                      }
+
+                      onReply={
+                        startReply
+                      }
+
+                      onForward={
+                        openForward
+                      }
+
+                      onCopy={
+                        copyMessage
+                      }
+
+                      onReaction={
+                        handleReaction
+                      }
+
+                      onDeleteForMe={
+                        deleteMessageForMe
+                      }
+
+                      onDeleteForEveryone={
+                        deleteMessageForEveryone
+                      }
+                    />
+                  </div>
+                )}
+
+              </div>
+            );
+          }
+        )
+      )}
+
+      <div
+        ref={endRef}
+      />
+    </div>
+
+    <form
+      className="composer"
+      onSubmit={
+        sendMessage
+      }
+    >{selectedFile && (
+      <div className="file-composer-strip">
+        <div className="file-composer-item">
+          <span className="file-composer-icon">
+            📄
+          </span>
+
+          <div className="file-composer-info">
+            <strong>
+              {selectedFile.file.name}
+            </strong>
+
+            <small>
+              {Math.round(
+                selectedFile.file.size /
+                1024
+              )}{' '}
+              KB
+            </small>
+          </div>
+
+          <button
+            type="button"
+            className="file-composer-remove"
+            onClick={() =>
+              setSelectedFile(null)
+            }
+          >
+            ×
+          </button>
+        </div>
+      </div>
+    )}
+      {selectedPhotos.length > 0 && (
+        <div className="photo-composer-strip">
+          {selectedPhotos.map(
+            (photo) => (
+              <div
+                key={photo.id}
+                className="photo-composer-item"
+              >
+                <button
+                  type="button"
+                  className="photo-composer-thumb"
+                  onClick={() =>
+                    setPreviewPhoto(
+                      photo
+                    )
+                  }
+                >
+                  <img
+                    src={
+                      photo.previewUrl
+                    }
+                    alt="Seçilen fotoğraf"
+                  />
+                </button>
+
+                <button
+                  type="button"
+                  className="photo-composer-remove"
+                  onClick={() => {
+                    URL.revokeObjectURL(
+                      photo.previewUrl
+                    );
+
+                    setSelectedPhotos(
+                      (current) =>
+                        current.filter(
+                          (item) =>
+                            item.id !==
+                            photo.id
+                        )
+                    );
+
+                    if (
+                      previewPhoto?.id ===
+                      photo.id
+                    ) {
+                      setPreviewPhoto(
+                        null
+                      );
+                    }
+                  }}
+                >
+                  ×
+                </button>
+              </div>
+            )
+          )}
+        </div>
+      )}
+      {previewPhoto && (
+        <div
+          className="photo-preview-modal"
+          onClick={() =>
+            setPreviewPhoto(null)
+          }
+        >
+          <button
+            type="button"
+            className="photo-preview-close"
+            onClick={(event) => {
+              event.stopPropagation();
+              setPreviewPhoto(null);
+            }}
+          >
+            ×
+          </button>
+
+          <img
+            src={previewPhoto.previewUrl}
+            alt="Fotoğraf önizleme"
+            onClick={(event) =>
+              event.stopPropagation()
+            }
           />
+        </div>
+      )}
+      {replyTo && (
+        <div className="reply-composer">
 
           <div>
             <strong>
-              {otherUser.displayName ||
-                'CyberTalk Kullanıcısı'}
+              {replyTo.userName ||
+                otherUser.displayName ||
+                'Kullanıcı'}
             </strong>
 
             <span>
-              @{otherUser.username ||
-                ''}
+              {getMessageText(
+                replyTo
+              )}
             </span>
           </div>
-        </button>
 
-        <div className="conversation-actions">
-
-          <div
-            className="conversation-menu-wrap"
-            ref={menuRef}
+          <button
+            type="button"
+            onClick={() =>
+              setReplyTo(
+                null
+              )
+            }
+            aria-label="Cevabı kapat"
           >
-            <button
-              type="button"
-              className="icon-btn"
-              aria-expanded={
-                showMenu
-              }
-              onClick={() =>
-                setShowMenu(
-                  (value) =>
-                    !value
-                )
-              }
-            >
-              •••
-            </button>
-
-            {showMenu && (
-              <div className="conversation-menu conversation-menu-rich">
-
-                <button
-                  type="button"
-                  onClick={() => {
-                    setShowMenu(
-                      false
-                    );
-
-                    onViewProfile?.();
-                  }}
-                >
-                  Profili görüntüle
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() =>
-                    toggleFlag(
-                      'pinnedBy',
-                      !isPinned
-                    )
-                  }
-                >
-                  {isPinned
-                    ? 'Sabitlemeyi kaldır'
-                    : 'Sohbeti sabitle'}
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() =>
-                    toggleFlag(
-                      'mutedBy',
-                      !isMuted
-                    )
-                  }
-                >
-                  {isMuted
-                    ? 'Sessizi kaldır'
-                    : 'Sohbeti sessize al'}
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() =>
-                    toggleFlag(
-                      'archivedBy',
-                      !isArchived
-                    )
-                  }
-                >
-                  {isArchived
-                    ? 'Arşivden çıkar'
-                    : 'Sohbeti arşivle'}
-                </button>
-
-                <button
-                  type="button"
-                  className="danger-menu-item"
-                  onClick={
-                    deleteConversationForMe
-                  }
-                >
-                  Sohbeti benden sil
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => {
-                    setShowMenu(
-                      false
-                    );
-
-                    onCloseConversation?.();
-                  }}
-                >
-                  Sohbeti kapat
-                </button>
-
-              </div>
-            )}
-          </div>
+            ×
+          </button>
 
         </div>
-      </header>
+      )}
 
-      <div className="messages">
-
-        {!messages.length ? (
-          <div className="conversation-empty">
-
-            <div className="big-lock">
-              🔒
-            </div>
-
-            <h2>
-              İlk mesajı gönder
-            </h2>
-
-            <p>
-              {otherUser.displayName ||
-                'Kullanıcı'} ile
-              konuşmayı başlat.
-            </p>
-
-          </div>
-        ) : (
-          messages.map(
-            (message) => {
-              const mine =
-                (
-                  message.senderId ||
-                  message.uid
-                ) ===
-                currentUser.uid;
-
-              const active =
-                messageMenu?.id ===
-                message.id;
-
-              const formattedTime =
-                message.pending
-                  ? ''
-                  : formatMessageTime(
-                    message.createdAt
-                  );
-
-              return (
-                <div
-                  key={
-                    message.id
-                  }
-                  className="message-bubble-wrap"
-                >
-
-                  <MessageBubble
-                    message={{
-                      ...message,
-                      formattedTime,
-                    }}
-                    mine={mine}
-                    active={active}
-                    currentUser={
-                      currentUser
-                    }
-                    onOpenMenu={
-                      openMessageMenu
-                    }
-                  />
-
-                  {active && (
-                    <div
-                      ref={
-                        messageMenuRef
-                      }
-                      className="message-actions-menu"
-                      style={{
-                        position:
-                          'fixed',
-
-                        top:
-                          messageMenu.top,
-
-                        left:
-                          messageMenu.left,
-
-                        zIndex:
-                          9999,
-                      }}
-                    >
-                      <MessageActions
-                        message={
-                          message
-                        }
-
-                        mine={
-                          mine
-                        }
-
-                        onReply={
-                          startReply
-                        }
-
-                        onForward={
-                          openForward
-                        }
-
-                        onCopy={
-                          copyMessage
-                        }
-
-                        onReaction={
-                          handleReaction
-                        }
-
-                        onDeleteForMe={
-                          deleteMessageForMe
-                        }
-
-                        onDeleteForEveryone={
-                          deleteMessageForEveryone
-                        }
-                      />
-                    </div>
-                  )}
-
-                </div>
-              );
-            }
-          )
-        )}
-
-        <div
-          ref={endRef}
+      {showEmojiPicker && (
+        <EmojiPicker
+          onSelect={
+            handleEmojiSelect
+          }
+          onClose={() =>
+            setShowEmojiPicker(
+              false
+            )
+          }
         />
+      )}
+
+      {showGifPicker && (
+        <GifPicker
+          onSelect={
+            sendGif
+          }
+          onClose={() =>
+            setShowGifPicker(
+              false
+            )
+          }
+        />
+      )}
+
+      <div
+        className="composer-main"
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: '8px',
+          width: '100%',
+          flexWrap: 'nowrap',
+        }}
+      >
+
+        <div className="composer-actions">
+          <input
+            ref={photoInputRef}
+            type="file"
+            accept="image/jpeg,image/png,image/webp,image/gif"
+            style={{ display: 'none' }}
+            onChange={(event) => {
+              const file =
+                event.target.files?.[0];
+
+              if (!file) {
+                return;
+              }
+
+              const allowedTypes = [
+                'image/jpeg',
+                'image/png',
+                'image/webp',
+                'image/gif',
+              ];
+
+              if (
+                !allowedTypes.includes(
+                  file.type
+                )
+              ) {
+                alert(
+                  'Sadece JPG, PNG, WEBP veya GIF seçebilirsin.'
+                );
+
+                event.target.value = '';
+                return;
+              }
+
+              if (
+                file.size >
+                10 * 1024 * 1024
+              ) {
+                alert(
+                  'Fotoğraf en fazla 10 MB olabilir.'
+                );
+
+                event.target.value = '';
+                return;
+              }
+
+              const previewUrl = URL.createObjectURL(file);
+              const photo = {
+                id: Date.now(),
+                file,
+                previewUrl,
+              };
+
+              setSelectedPhotos((current) => [
+                ...current,
+                photo,
+              ]);
+
+              event.target.value = '';
+            }}
+          />
+
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.zip,.rar,.7z"
+            style={{ display: 'none' }}
+            onChange={(event) => {
+              const file =
+                event.target.files?.[0];
+
+              if (!file) {
+                return;
+              }
+
+              if (
+                file.size >
+                25 * 1024 * 1024
+              ) {
+                alert(
+                  'Belge en fazla 25 MB olabilir.'
+                );
+
+                event.target.value = '';
+                return;
+              }
+
+              setSelectedFile({
+                id: Date.now(),
+                file,
+              });
+
+              event.target.value = '';
+            }}
+          />
+
+          <button
+            type="button"
+            className="composer-plus-btn"
+            aria-label="Ekler"
+            aria-expanded={showComposerTools}
+            onClick={() => {
+              setShowComposerTools(
+                (value) => !value
+              );
+
+              setShowEmojiPicker(false);
+              setShowGifPicker(false);
+            }}
+          >
+            +
+          </button>
+
+          {showComposerTools && (
+
+            <ComposerTools
+              onEmoji={() => {
+                setShowEmojiPicker(true);
+                setShowGifPicker(false);
+              }}
+              onGif={() => {
+                setShowGifPicker(true);
+                setShowEmojiPicker(false);
+              }}
+              onPhoto={() => {
+                photoInputRef.current?.click();
+              }}
+              onDocument={() => {
+                fileInputRef.current?.click();
+              }}
+              onClose={() => {
+                setShowComposerTools(false);
+              }}
+            />
+
+          )}
+
+        </div>
+
+        <input
+          value={draft}
+          onChange={(event) =>
+            setDraft(
+              event.target.value
+            )
+          }
+          placeholder={
+            replyTo
+              ? 'Cevabını yaz...'
+              : 'Mesaj yaz...'
+          }
+          style={{
+            flex: '1 1 auto',
+            minWidth: 0,
+          }}
+        />
+
+        <button
+          type="submit"
+          className="send-btn"
+          disabled={
+            !draft.trim() &&
+            selectedPhotos.length === 0 &&
+            !selectedFile
+          }
+          style={{
+            flex: '0 0 auto',
+          }}
+        >
+          ➤
+        </button>
+
       </div>
 
-      <form
-        className="composer"
-        onSubmit={
-          sendMessage
+    </form>
+
+    {forwardMessage && (
+      <div
+        className="forward-overlay"
+        onClick={() =>
+          setForwardMessage(
+            null
+          )
         }
       >
-        {selectedPhotos.length > 0 && (
-          <div className="photo-composer-strip">
-            {selectedPhotos.map(
-              (photo) => (
-                <div
-                  key={photo.id}
-                  className="photo-composer-item"
-                >
-                  <button
-                    type="button"
-                    className="photo-composer-thumb"
-                    onClick={() =>
-                      setPreviewPhoto(
-                        photo
-                      )
-                    }
-                  >
-                    <img
-                      src={
-                        photo.previewUrl
-                      }
-                      alt="Seçilen fotoğraf"
-                    />
-                  </button>
+        <div
+          className="forward-panel"
+          onClick={(event) =>
+            event.stopPropagation()
+          }
+        >
 
-                  <button
-                    type="button"
-                    className="photo-composer-remove"
-                    onClick={() => {
-                      URL.revokeObjectURL(
-                        photo.previewUrl
-                      );
-
-                      setSelectedPhotos(
-                        (current) =>
-                          current.filter(
-                            (item) =>
-                              item.id !==
-                              photo.id
-                          )
-                      );
-
-                      if (
-                        previewPhoto?.id ===
-                        photo.id
-                      ) {
-                        setPreviewPhoto(
-                          null
-                        );
-                      }
-                    }}
-                  >
-                    ×
-                  </button>
-                </div>
-              )
-            )}
-          </div>
-        )}
-        {previewPhoto && (
-          <div
-            className="photo-preview-modal"
-            onClick={() =>
-              setPreviewPhoto(null)
-            }
-          >
-            <button
-              type="button"
-              className="photo-preview-close"
-              onClick={(event) => {
-                event.stopPropagation();
-                setPreviewPhoto(null);
-              }}
-            >
-              ×
-            </button>
-
-            <img
-              src={previewPhoto.previewUrl}
-              alt="Fotoğraf önizleme"
-              onClick={(event) =>
-                event.stopPropagation()
-              }
-            />
-          </div>
-        )}
-        {replyTo && (
-          <div className="reply-composer">
-
+          <div className="forward-header">
             <div>
               <strong>
-                {replyTo.userName ||
-                  otherUser.displayName ||
-                  'Kullanıcı'}
+                Mesajı ilet
               </strong>
 
               <span>
-                {getMessageText(
-                  replyTo
-                )}
+                Kime göndermek
+                istiyorsun?
               </span>
             </div>
 
             <button
               type="button"
               onClick={() =>
-                setReplyTo(
+                setForwardMessage(
                   null
                 )
               }
-              aria-label="Cevabı kapat"
             >
               ×
             </button>
-
-          </div>
-        )}
-
-        {showEmojiPicker && (
-          <EmojiPicker
-            onSelect={
-              handleEmojiSelect
-            }
-            onClose={() =>
-              setShowEmojiPicker(
-                false
-              )
-            }
-          />
-        )}
-
-        {showGifPicker && (
-          <GifPicker
-            onSelect={
-              sendGif
-            }
-            onClose={() =>
-              setShowGifPicker(
-                false
-              )
-            }
-          />
-        )}
-
-        <div
-          className="composer-main"
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: '8px',
-            width: '100%',
-            flexWrap: 'nowrap',
-          }}
-        >
-
-          <div className="composer-actions">
-            <input
-              ref={photoInputRef}
-              type="file"
-              accept="image/jpeg,image/png,image/webp,image/gif"
-              style={{ display: 'none' }}
-              onChange={(event) => {
-                const file =
-                  event.target.files?.[0];
-
-                if (!file) {
-                  return;
-                }
-
-                const allowedTypes = [
-                  'image/jpeg',
-                  'image/png',
-                  'image/webp',
-                  'image/gif',
-                ];
-
-                if (
-                  !allowedTypes.includes(
-                    file.type
-                  )
-                ) {
-                  alert(
-                    'Sadece JPG, PNG, WEBP veya GIF seçebilirsin.'
-                  );
-
-                  event.target.value = '';
-                  return;
-                }
-
-                if (
-                  file.size >
-                  10 * 1024 * 1024
-                ) {
-                  alert(
-                    'Fotoğraf en fazla 10 MB olabilir.'
-                  );
-
-                  event.target.value = '';
-                  return;
-                }
-
-                const previewUrl = URL.createObjectURL(file);
-                const photo = {
-                  id: Date.now(),
-                  file,
-                  previewUrl,
-                };
-
-                setSelectedPhotos((current) => [
-                  ...current,
-                  photo,
-                ]);
-
-                event.target.value = '';
-              }}
-            />
-
-            <button
-              type="button"
-              className="composer-plus-btn"
-              aria-label="Ekler"
-              aria-expanded={showComposerTools}
-              onClick={() => {
-                setShowComposerTools(
-                  (value) => !value
-                );
-
-                setShowEmojiPicker(false);
-                setShowGifPicker(false);
-              }}
-            >
-              +
-            </button>
-
-            {showComposerTools && (
-
-              <ComposerTools
-                onEmoji={() => {
-                  setShowEmojiPicker(true);
-                  setShowGifPicker(false);
-                }}
-                onGif={() => {
-                  setShowGifPicker(true);
-                  setShowEmojiPicker(false);
-                }}
-                onPhoto={() => {
-                  photoInputRef.current?.click();
-                }}
-                onClose={() => {
-                  setShowComposerTools(false);
-                }}
-              />
-
-            )}
-
           </div>
 
-          <input
-            value={draft}
-            onChange={(event) =>
-              setDraft(
-                event.target.value
-              )
-            }
-            placeholder={
-              replyTo
-                ? 'Cevabını yaz...'
-                : 'Mesaj yaz...'
-            }
-            style={{
-              flex: '1 1 auto',
-              minWidth: 0,
-            }}
-          />
-
-          <button
-            type="submit"
-            className="send-btn"
-            disabled={
-              !draft.trim() &&
-              selectedPhotos.length === 0
-            }
-            style={{
-              flex: '0 0 auto',
-            }}
-          >
-            ➤
-          </button>
-
-        </div>
-
-      </form>
-
-      {forwardMessage && (
-        <div
-          className="forward-overlay"
-          onClick={() =>
-            setForwardMessage(
-              null
-            )
-          }
-        >
-          <div
-            className="forward-panel"
-            onClick={(event) =>
-              event.stopPropagation()
-            }
-          >
-
-            <div className="forward-header">
-              <div>
-                <strong>
-                  Mesajı ilet
-                </strong>
-
-                <span>
-                  Kime göndermek
-                  istiyorsun?
-                </span>
-              </div>
-
-              <button
-                type="button"
-                onClick={() =>
-                  setForwardMessage(
-                    null
-                  )
-                }
-              >
-                ×
-              </button>
+          {forwardLoading ? (
+            <div className="forward-state">
+              Kullanıcılar
+              yükleniyor...
             </div>
+          ) : !usersForForward.length ? (
+            <div className="forward-state">
+              İletilecek başka
+              kullanıcı bulunamadı.
+            </div>
+          ) : (
+            <div className="forward-users">
 
-            {forwardLoading ? (
-              <div className="forward-state">
-                Kullanıcılar
-                yükleniyor...
-              </div>
-            ) : !usersForForward.length ? (
-              <div className="forward-state">
-                İletilecek başka
-                kullanıcı bulunamadı.
-              </div>
-            ) : (
-              <div className="forward-users">
+              {usersForForward.map(
+                (user) => (
+                  <button
+                    key={
+                      user.uid
+                    }
+                    type="button"
+                    className="forward-user"
+                    onClick={() =>
+                      forwardToUser(
+                        user
+                      )
+                    }
+                  >
+                    <Avatar
+                      user={user}
+                    />
 
-                {usersForForward.map(
-                  (user) => (
-                    <button
-                      key={
-                        user.uid
-                      }
-                      type="button"
-                      className="forward-user"
-                      onClick={() =>
-                        forwardToUser(
-                          user
-                        )
-                      }
-                    >
-                      <Avatar
-                        user={user}
-                      />
+                    <div>
+                      <strong>
+                        {user.displayName ||
+                          'CyberTalk Kullanıcısı'}
+                      </strong>
 
-                      <div>
-                        <strong>
-                          {user.displayName ||
-                            'CyberTalk Kullanıcısı'}
-                        </strong>
+                      <span>
+                        @{user.username ||
+                          'kullanici'}
+                      </span>
+                    </div>
+                  </button>
+                )
+              )}
 
-                        <span>
-                          @{user.username ||
-                            'kullanici'}
-                        </span>
-                      </div>
-                    </button>
-                  )
-                )}
+            </div>
+          )}
 
-              </div>
-            )}
-
-          </div>
         </div>
-      )}
-
-    </div>
+      </div>
+    )}
+  </div>
   );
 }
