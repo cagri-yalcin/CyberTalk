@@ -78,23 +78,7 @@ export default function ComposerTools({
                 </span>
             </button>
 
-            <button
-                type="button"
-                className="composer-tool-item disabled"
-                disabled
-            >
-                <span className="composer-tool-icon">
-                    📄
-                </span>
 
-                <span>
-                    Belge
-
-                    <small>
-                        Yakında
-                    </small>
-                </span>
-            </button>
 
         </div>
     );
