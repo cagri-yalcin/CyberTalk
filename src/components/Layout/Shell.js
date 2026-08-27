@@ -5,6 +5,8 @@ import React, {
 
 import {
   db,
+  firebase,
+  rtdb,
 } from '../../services/firebase';
 
 import UsersList from '../Users/UsersList';
@@ -34,6 +36,9 @@ export default function Shell({
     setShowArchived,
   ] = useState(false);
 
+  /*
+   * Kullanıcı profilini realtime dinle
+   */
   useEffect(() => {
     const unsubscribe =
       db
@@ -55,6 +60,93 @@ export default function Shell({
 
     return unsubscribe;
   }, [user.uid]);
+
+  /*
+   * CyberTalk Presence
+   *
+   * Realtime Database üzerinden
+   * online / offline durumunu takip eder.
+   */
+  useEffect(() => {
+    if (!user?.uid) {
+      return undefined;
+    }
+
+    const userStatusRef =
+      rtdb.ref(
+        `status/${user.uid}`
+      );
+
+    const connectedRef =
+      rtdb.ref('.info/connected');
+
+    const handleConnection =
+      async (snapshot) => {
+        if (snapshot.val() !== true) {
+          return;
+        }
+
+        try {
+          /*
+           * Bağlantı koparsa Firebase otomatik
+           * olarak offline durumunu yazar.
+           */
+          await userStatusRef
+            .onDisconnect()
+            .set({
+              isOnline: false,
+              lastSeen:
+                firebase.database.ServerValue
+                  .TIMESTAMP,
+            });
+
+          /*
+           * Şu anda online.
+           */
+          await userStatusRef.set({
+            isOnline: true,
+            lastSeen:
+              firebase.database.ServerValue
+                .TIMESTAMP,
+          });
+        } catch (error) {
+          console.error(
+            'Presence güncellenemedi:',
+            error
+          );
+        }
+      };
+
+    connectedRef.on(
+      'value',
+      handleConnection
+    );
+
+    return () => {
+      connectedRef.off(
+        'value',
+        handleConnection
+      );
+
+      /*
+       * Uygulama düzgün şekilde kapanırsa
+       * hemen offline yap.
+       */
+      userStatusRef
+        .set({
+          isOnline: false,
+          lastSeen:
+            firebase.database.ServerValue
+              .TIMESTAMP,
+        })
+        .catch((error) => {
+          console.error(
+            'Offline durumu güncellenemedi:',
+            error
+          );
+        });
+    };
+  }, [user?.uid]);
 
   const ownUser = {
     ...user,

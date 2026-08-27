@@ -167,8 +167,8 @@ function renderReactions(
                 <span
                     key={reaction.emoji}
                     className={`message-reaction ${reaction.mine
-                            ? 'mine'
-                            : ''
+                        ? 'mine'
+                        : ''
                         }`}
                 >
                     <span>
@@ -192,90 +192,143 @@ export default function MessageBubble({
     active,
     onOpenMenu,
     currentUser,
+    otherUserOnline,
+    otherUser,
 }) {
     const [
         imageViewerOpen,
         setImageViewerOpen,
     ] = useState(false);
 
+    const isRead =
+        mine &&
+        Array.isArray(message.readBy) &&
+        message.readBy.includes(
+            otherUser?.uid
+        );
+
+    const wasRecipientOnline =
+        message.recipientOnlineAtSend === true;
+
+    const isDelivered =
+        mine &&
+        (
+            (
+                Array.isArray(
+                    message.deliveredTo
+                ) &&
+                message.deliveredTo.includes(
+                    otherUser?.uid
+                )
+            ) ||
+            wasRecipientOnline
+        );
+
     return (
         <>
             <div
-            className={`bubble-row ${mine
+                className={`bubble-row ${mine
                     ? 'mine'
                     : 'theirs'
-                }`}
-        >
-            <div
-                className={`bubble ${mine
+                    }`}
+            >
+                <div
+                    className={`bubble ${mine
                         ? 'mine'
                         : 'theirs'
-                    } ${active
-                        ? 'selected'
-                        : ''
-                    }`}
-                onClick={(event) =>
-                    onOpenMenu(
-                        event,
-                        message
-                    )
-                }
-            >
-                {renderReplyPreview(
-                    message
-                )}
-
-                {message.forwardedFrom && (
-                    <div className="message-forwarded-label">
-                        ↗ İletildi
-                    </div>
-                )}
-
-                {renderContent(
-                    message,
-                    () => setImageViewerOpen(true)
-                )}
-
-                <div
-                    className="message-meta-row"
-                    style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'flex-end',
-                        gap: '6px',
-                        marginTop: '4px',
-                    }}
+                        } ${active
+                            ? 'selected'
+                            : ''
+                        }`}
+                    onClick={(event) =>
+                        onOpenMenu(
+                            event,
+                            message
+                        )
+                    }
                 >
-                    {message.editedAt && (
-                        <span
-                            className="message-edited-label"
-                            title="Bu mesaj düzenlendi"
-                            style={{
-                                fontSize: '10px',
-                                opacity: 0.72,
-                                lineHeight: 1,
-                                letterSpacing: '0.1px',
-                                fontStyle: 'italic',
-                                whiteSpace: 'nowrap',
-                            }}
-                        >
-                            • düzenlendi
-                        </span>
+                    {renderReplyPreview(
+                        message
                     )}
 
-                    <span className="message-time">
-                        {message.pending
-                            ? 'Gönderiliyor...'
-                            : message.formattedTime}
-                    </span>
-                </div>
-            </div>
+                    {message.forwardedFrom && (
+                        <div className="message-forwarded-label">
+                            ↗ İletildi
+                        </div>
+                    )}
 
-            {renderReactions(
-                message,
-                currentUser
-            )}
-        </div>
+                    {renderContent(
+                        message,
+                        () => setImageViewerOpen(true)
+                    )}
+
+                    <div
+                        className="message-meta-row"
+                        style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'flex-end',
+                            gap: '6px',
+                            marginTop: '4px',
+                        }}
+                    >
+                        {message.editedAt && (
+                            <span
+                                className="message-edited-label"
+                                title="Bu mesaj düzenlendi"
+                                style={{
+                                    fontSize: '10px',
+                                    opacity: 0.72,
+                                    lineHeight: 1,
+                                    letterSpacing: '0.1px',
+                                    fontStyle: 'italic',
+                                    whiteSpace: 'nowrap',
+                                }}
+                            >
+                                • düzenlendi
+                            </span>
+                        )}
+                        {mine && !message.pending && (
+                            <span
+                                style={{
+                                    fontSize: '12px',
+                                    fontWeight: '700',
+                                    letterSpacing: '-2px',
+                                    color: isRead
+                                        ? '#7dd3fc'
+                                        : 'rgba(255,255,255,0.75)',
+                                    textShadow: isRead
+                                        ? '0 0 4px rgba(125,211,252,0.65)'
+                                        : 'none',
+                                }}
+                                title={
+                                    isRead
+                                        ? 'Okundu'
+                                        : isDelivered
+                                            ? 'Gönderildi'
+                                            : 'Karşı taraf çevrimdışı'
+                                }
+                            >
+                                {isRead
+                                    ? '✓✓'
+                                    : isDelivered
+                                        ? '✓✓'
+                                        : '✓'}
+                            </span>
+                        )}
+                        <span className="message-time">
+                            {message.pending
+                                ? 'Gönderiliyor...'
+                                : message.formattedTime}
+                        </span>
+                    </div>
+                </div>
+
+                {renderReactions(
+                    message,
+                    currentUser
+                )}
+            </div>
 
             {imageViewerOpen &&
                 message.type === 'image' &&

@@ -3,11 +3,13 @@ import 'firebase/auth';
 import 'firebase/firestore';
 import 'firebase/storage';
 import 'firebase/analytics';
+import 'firebase/database';
 
 const firebaseConfig = {
   apiKey: "AIzaSyDbcKtSHMwYwAa7WUIm4meFv8sHrDUOllY",
   authDomain: "cybertallk.firebaseapp.com",
   projectId: "cybertallk",
+  databaseURL: "https://cybertallk-default-rtdb.firebaseio.com",
   storageBucket: "cybertallk.firebasestorage.app",
   messagingSenderId: "197549243735",
   appId: "1:197549243735:web:135aae0aa6ea6d196f9212",
@@ -30,5 +32,6 @@ try {
 export const auth = firebase.auth();
 export const db = firebase.firestore();
 export const storage = firebase.storage();
+export const rtdb = firebase.database();
 
 export { firebase };
